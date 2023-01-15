@@ -2,7 +2,7 @@
 #![allow(unused_mut)]
 #![allow(dead_code)]
 
-use std::ops::Index;
+use std::ops::{Index, RangeInclusive};
 use rand::prelude::*;
 use rand_distr::{LogNormal, Distribution};
 // use rand_distr::{Normal, Distribution};
@@ -11,79 +11,65 @@ use image::{GrayImage, Luma};
 struct Corners (f32, f32, f32, f32);
 
 #[derive(Debug)]
-enum Map {
-    Tile ([f32;1089]),
-    Meta (Vec<Vec<f32>>),
-    FullMap (Vec<f32>),
+enum MapKind{
+    Primary,
+    Meta,
+    Final,
+    Temp,
+}
+#[derive(Debug)]
+struct Map<T> {
+    kind: MapKind,
+    size: usize,
+    meta_size: usize,
+    data: Vec<T>,
 }
 
-impl Index<usize> for Map {
-    type Output = f32;
-    fn index(&self, index: usize) -> &f32 {
-        match self {
-            Map::Tile(arr) => arr.index(index),
-            Map::Meta(vex) => {
-                let vec = vex.index(index / vex.len());
-                vec.index(index % vex.len())
-            },
-            Map::FullMap(vec) => vec.index(index),
-        }
-    }
-}
-
-impl Map {
-    fn default() -> Self {
-        Map::Tile([0.0;1089])
-    }
-    fn full_map(cap: usize) -> Self {
-        let mut data = Vec::with_capacity(cap);
+impl<T> Map<T> {
+    fn new(kind: MapKind, size: usize, meta_size: Option<usize>) -> Self {
+        let length = size * size;
+        let meta_size = match meta_size {
+            Some(n) => n,
+            None => size,
+        };
+        let data: Vec<T> = Vec::with_capacity(length);
         unsafe {
-            data.set_len(cap);
+            data.set_len(length);
         }
-        Map::FullMap(data)
+        Map { kind, size, meta_size, data }
     }
-    fn meta_map(cap: usize) -> Self {
-        let mut vex = Vec::new();
-        for _ in 0..cap {
-            let mut vec = Vec::with_capacity(cap);
-            unsafe {
-                vec.set_len(cap);
-            }
-            vex.push(vec)    
-        }
-        Map::Meta(vex)
+    fn primary_map(size: usize) -> Self {
+        Map::new(MapKind::Primary, size, None)
+    }
+    fn meta_map (size: usize, meta_size: usize) -> Self {
+        Map::new(MapKind::Meta, size, Some(meta_size))
+    }
+    fn final_map (size: usize) -> Self {
+        Map::new(MapKind::Final, size, None)
+    }
+    fn final_map(size: usize) -> Self {
+        Map::new(MapKind::Temp, size, None)
     }
     fn len(&self) -> usize {
-        match self {
-            Map::Tile(arr) => arr.len(),
-            Map::Meta(vec) => vec.len() * vec[0].len(),
-            Map::FullMap(vec) => vec.len(),
-        }
+        self.data.len()
     }
     fn size(&self) -> usize {
-        let len = self.len() as f32;
-        let root = len.sqrt();
-        assert_eq!(root.round(), root);
-        root as usize
+        self.size
     }
-    fn get(&self, x: usize, y: usize) -> f32 {
-        match self {
-            Map::Meta(vex) => {
-                vex[x][y]
-            },
-            _ => panic!("get() doesn't handle this type of map"),
-        }
+    fn get(&self, row: usize, col: usize) -> f32 {
+        let idx = row * self.size + col;
+        self.data[idx]
     }
-    fn set(&mut self, x: usize, y: usize, value: f32) {
-        let idx = x * self.size() + y;
-        // println!("MAP: {:?}", self);
-        // println!("IDX: {}", idx);
-        match self {
-            Map::Tile(arr) => arr[idx] = value,
-            Map::Meta(vex) => vex[x][y] = value,
-            Map::FullMap(vec) => vec[idx] = value,
-        }
+    fn set(&mut self, row: usize, col: usize, value: f32) {
+        let idx = row * self.size + col;
+        self.data[idx] = value;
     }
+}
+
+#[derive(Debug)]
+enum Rufs {
+    RVal (f32),
+    RMap (Map<Option<f32>>),
 }
 
 #[derive(Debug)]
@@ -101,11 +87,10 @@ fn avg(map: &mut Map, x: usize, y: usize, dist: usize, offsets: [(isize, isize);
     for (p, q) in offsets {
         let pp = x as isize + p * dist as isize;
         let qq = y as isize + q * dist as isize;
-        // println!("p: {}, pp {}, q: {}, qq: {}", p, pp, q, qq);
         if pp >= 0 && pp < size as isize && qq >= 0 && qq < size as isize {
             let upp = pp as usize;
             let uqq = qq as usize;
-            result += map[upp * size + uqq];
+            result += map.get(upp, uqq);
         }
         k += 1.0;    
     }
@@ -119,7 +104,7 @@ fn rand_exp() -> f32 {
     result
 }
 
-fn random_delta(range: std::ops::RangeInclusive<f32>, local_variance: f32) -> f32 {
+fn random_delta(range: RangeInclusive<f32>, local_variance: f32) -> f32 {
     let mut rng = thread_rng();
     let base = rng.gen_range(range);
     base * local_variance * rand_exp().exp2()
@@ -144,7 +129,7 @@ fn apply_delta(value: f32, delta: f32, btm: f32, top: f32) -> f32 {
 }
 
 
-fn set_point(map: &mut Map, x: usize, y: usize, btm: f32, top: f32,
+fn set_point(map: &mut Map<f32>, x: usize, y: usize, btm: f32, top: f32,
              distance: usize, variance: f32, step_type: Step) {
     let offsets = match step_type {
         Step::Diamond =>  [(-1, -1), (-1, 1), (1, 1), (1, -1)],
@@ -172,40 +157,55 @@ fn set_point(map: &mut Map, x: usize, y: usize, btm: f32, top: f32,
     map.set(x, y, nuval);
 }
 
-fn ds_step(map: &mut Map, btm: f32, top: f32, distance: usize, variance: f32) {
+fn interpolate(map: Map<Option<f32>>, row, col) {
+    
+}
+
+fn get_local_variance(rufs: &mut Map<Option<f32>>, row: usize, col: usize) -> f32 {
+    match rufs.get(row, col) {
+        Some(n) => n,
+        None => {
+            let n = interpolate(rufs, row, col);
+            rufs.set(row, col, Some(n));
+            n
+        }
+    }
+}
+
+fn ds_step(map: &mut Map<f32>, rufs: Rufs, btm: f32, top: f32, distance: usize, variance: f32) {
     let size = map.size();
     let distance_ = distance / 2;
     let limit = size/distance;
 
     // Diamond Step
-    for x_ in 0..limit {
-        let x = x_ * distance + distance_;
-        for y_ in 0..limit {
-            let y = y_ * distance + distance_;
-            set_point(map, x, y, btm, top, distance_, variance, Step::Diamond);
+    for row_ in 0..limit {
+        let row = row_ * distance + distance_;
+        for col_ in 0..limit {
+            let col = col_ * distance + distance_;
+            set_point(map, row, col, btm, top, distance_, variance, Step::Diamond);
         }
     }
 
     // Square Step, rows
-    for x_ in 0..limit {
-        let x = x_ * distance + distance_;
-        for y_ in 0..=limit {
-            let y = y_ * distance;
-            set_point(map, x, y, btm, top, distance_, variance, Step::Square);
+    for row_ in 0..limit {
+        let row = row_ * distance + distance_;
+        for col_ in 0..=limit {
+            let col = col_ * distance;
+            set_point(map, row, col, btm, top, distance_, variance, Step::Square);
         }
     }
 
     // Square Step, cols
-    for x_ in 0..=limit {
-        let x = x_ * distance;
-        for y_ in 0..limit {
-            let y = y_ * distance + distance_;
-            set_point(map, x, y, btm, top, distance_, variance, Step::Square);
+    for row_ in 0..=limit {
+        let row = row_ * distance;
+        for col_ in 0..limit {
+            let col = col_ * distance + distance_;
+            set_point(map, row, col, btm, top, distance_, variance, Step::Square);
         }
     }
 }
 
-fn fill_map(map: &mut Map, corners: Corners, btm: f32, top: f32, roughness: f32) {
+fn fill_map(map: &mut Map<f32>, roughness: f32, rufs: Rufs, corners: Corners, btm: f32, top: f32) {
     let size = map.size();
     let limit = size - 1;
     let Corners(ul, ur, ll, lr) = corners;
@@ -217,137 +217,27 @@ fn fill_map(map: &mut Map, corners: Corners, btm: f32, top: f32, roughness: f32)
     let mut variance = 1.0;
 
     while distance > 1 {
-        ds_step(map, btm, top, distance, variance);
+        ds_step(map, rufs, btm, top, distance, variance);
         distance = distance / 2;
-        variance = variance * roughness;
+        variance = variance * rufs;
     }    
 }
 
-fn generate_tile(corners: Corners, btm: f32, top: f32, roughness: f32) -> Map {
-    let mut tile = Map::default();
-    fill_map(&mut tile, corners, btm, top, roughness);
-    tile
-}
 
-// TEMPORARY, I THINK
-fn generate_megatile(corners: Corners, btm: f32, top: f32, roughness: f32) -> Map {
-    // let mut map = Map::full_map(4_198_401); // 2049x2049
-    let mut map = Map::full_map(1_050_625); // 1025x1025
+fn generate_primary(size: usize, corners: Corners, btm: f32, top: f32, roughness: f32) -> Map {
+    let mut map = Map::primary_map(size);
     fill_map(&mut map, corners, btm, top, roughness);
     map
 }
 
-fn remove_middle<T>(vec: &mut Vec<T>, start: usize, end: usize) {
-    for i in start..end {
-        vec.remove(i);
-    }
-}
-
-fn collapse_meta(map: &mut Map, n_items: usize) {
-    match map {
-        Map::Meta(vex) => {
-            let size = vex.len();
-            let start = (size - n_items) / 2;
-            let end = start + n_items;
-            remove_middle(vex, start, end);
-            for vec in vex {
-                remove_middle(vec, start, end);
-            }
-        },
-        _ => panic!("collapse_meta can't handle this type of map.")
-    }
-}
-
-fn generate_vertex_map(corners: Corners, btm: f32, top: f32, roughness: f32) -> Map {
-    let mut vtxs = Map::meta_map(33);
-    fill_map(&mut vtxs, corners, btm, top, roughness);
-    collapse_meta(&mut vtxs, 1);
-    vtxs
-}
-
-fn generate_roughness_map(corners: Corners, btm: f32, top: f32, roughness: f32) -> Map {
-    let mut rufs = Map::meta_map(33);
+fn generate_roughness_map(size: usize,  corners: Corners, btm: f32, top: f32, roughness: f32) -> Map {
+    let mut temp_map = Map::meta_map(size);
     fill_map(&mut rufs, corners, btm, top, roughness);
-    collapse_meta(&mut rufs, 2);
     rufs
 }
 
-fn generate_map(ntiles: usize, min_roughness: f32, max_roughness: f32) -> Map {
-    let vtxs = generate_vertex_map(Corners(0.0, 0.0, 0.0, 0.0), 0.0, 192.0, 0.4);
-    let rufs = generate_roughness_map(Corners(0.45, 0.45, 0.45, 0.45), 0.3, 0.65, 0.4);
-
-    let mut tiles: Vec<Map> = Vec::new();
-    let mut rng = thread_rng();
-    // for _ in 0..4096 {
-    for row in 0..31 {
-        for col in 0..31 {
-            println!("{}/{}", row, col);
-            // let ruffness = rng.gen_range(min_roughness..=max_roughness);
-            let ul = vtxs.get(row, col);
-            let ur = vtxs.get(row, col+1);
-            let ll = vtxs.get(row+1, col);
-            let lr = vtxs.get(row+1, col+1);
-            let tile = generate_tile(Corners(ul, ur, ll, lr), 0.0, 255.0, rufs.get(row, col));
-            tiles.push(tile);
-        }
-    }
-    // let mut map = Map::full_map(4_460_544);
-    let mut map = Map::full_map(1_115_136);
-    for grand_row in 0..31 {
-        for grand_col in 0..31 {
-            let tile_idx = grand_row * 31 + grand_col;
-            let tile = &tiles[tile_idx];
-            for row in 0..33 {
-                for col in 0..33 {
-                    let map_row = grand_row * 33 + row;
-                    let map_col = grand_col * 33 + col;
-                    // let map_pos = map_row * 2112 + map_col;
-                    let tile_pos = row * 33 + col;
-                    map.set(map_row, map_col, tile[tile_pos]);
-                }
-            }
-        }
-    }
-    map
-}
-
 fn main() {
-    // println!("{:?}", tile);
-    /*
-    let map = generate_map(64, 0.4, 0.7);
-    let mut img = GrayImage::new(1056, 1056);
-    for x in 0..1056 {
-        for y in 0..1056 {
-            let val = map[x * 1056 + y] as u8;
-            img.put_pixel(x as u32, y as u32, Luma([val]));
-        }
-    }
-    */
-    let map1 = generate_megatile(Corners(0.0, 0.0, 0.0, 0.0), 0.0, 376.0, 0.67);
-    /*
-    let mut img1 = GrayImage::new(2049, 2049);
-    for x in 0..2049 {
-        for y in 0..2049 {
-            let val_ = map1[x * 2049 + y];
-            let val = if val_ <= 63.0 {
-                0.0
-            } else if val_ <= 96.0 {
-                1.0
-            } else if val_ <= 112.0 {
-                2.0
-            } else if val_ <= 120.0 {
-                3.0
-            } else if val_ <= 124.0 {
-                4.0
-            } else if val_ <= 126.0 {
-                5.0
-            } else {
-                val_ - 121.0
-            } as u8;
-            img1.put_pixel(x as u32, y as u32, Luma([val]));
-        }
-    }
-    */
+    let map1 = generate_primary(1025, Corners(0.0, 0.0, 0.0, 0.0), 0.0, 376.0, 0.67);
     let mut img1 = GrayImage::new(1025, 1025);
     for x in 0..1025 {
         for y in 0..1025 {
