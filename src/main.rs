@@ -4,6 +4,8 @@
 
 use std::ops::Index;
 use rand::prelude::*;
+use rand_distr::{LogNormal, Distribution};
+// use rand_distr::{Normal, Distribution};
 use image::{GrayImage, Luma};
 
 struct Corners (f32, f32, f32, f32);
@@ -110,6 +112,38 @@ fn avg(map: &mut Map, x: usize, y: usize, dist: usize, offsets: [(isize, isize);
     result / k
 }
 
+fn rand_exp() -> f32 {
+    let distro = LogNormal::new(-1.0, 0.5).unwrap();
+    let result = distro.sample(&mut thread_rng());
+    // println!("Random exponent = {}", result);
+    result
+}
+
+fn random_delta(range: std::ops::RangeInclusive<f32>, local_variance: f32) -> f32 {
+    let mut rng = thread_rng();
+    let base = rng.gen_range(range);
+    base * local_variance * rand_exp().exp2()
+}
+
+// "Folds" the delta if the result would be outside the allowed range.
+fn apply_delta(value: f32, delta: f32, btm: f32, top: f32) -> f32 {
+    if value < btm {
+        println!("WARNING - value outside of allowed range: {}", value);
+        return btm;
+    } else if value > top {
+        println!("WARNING - value outside of allowed range: {}", value);
+        return top;
+    }
+    let candidate = value + delta;
+    if candidate < btm || candidate > top {
+        println!("Tentative result outside allowed range: {}", candidate);
+        value - delta
+    } else {
+        candidate
+    }
+}
+
+
 fn set_point(map: &mut Map, x: usize, y: usize, btm: f32, top: f32,
              distance: usize, variance: f32, step_type: Step) {
     let offsets = match step_type {
@@ -119,16 +153,22 @@ fn set_point(map: &mut Map, x: usize, y: usize, btm: f32, top: f32,
     
     let average = avg(map, x, y, distance, offsets);
     /*
-    let max_deviation = f32::min(top - average, average - btm) * variance;
-    println!("max_deviation: {}", max_deviation);
+    let exponent = rand_exp() * variance;
+    // println!("exponent = {}", exponent);
+    let mult = exponent.exp2();
+    println!("multiplier = {}", mult);
     */
-    let max_deviation = f32::min(top - average, average - btm);
-    let mut rng = thread_rng();
-    let random_limit = rng.gen_range(btm..=top);
-    let delta = (random_limit - average) * variance;
-    let nuval = average + delta;
-    // let nuval = average + random_delta;
-    // map.set(x * map.size() + y, nuval);
+    // let nuval = average * (rand_exp() * variance).exp2();
+    // let delta = rand_exp() * variance;
+    // println!("delta = {}", delta);
+    // let nuval = average * mult;
+    // let nuval = average + delta;
+    let diff = top - btm;
+    let delta = random_delta(-(diff/4.0)..=(diff/2.0), variance);
+    // println!("delta = {}", delta);
+    // let nuval = average + delta;
+    let nuval = apply_delta(average, delta, btm, top);
+    // println!("nuval = {}", nuval);
     map.set(x, y, nuval);
 }
 
@@ -312,6 +352,7 @@ fn main() {
     for x in 0..1025 {
         for y in 0..1025 {
             let val_ = map1[x * 1025 + y];
+            // /*
             let val = if val_ <= 63.0 {
                 0.0
             } else if val_ <= 96.0 {
@@ -327,11 +368,13 @@ fn main() {
             } else {
                 val_ - 121.0
             } as u8;
+            // */
+            // let val = val_ as u8;
             img1.put_pixel(x as u32, y as u32, Luma([val]));
         }
     }
     img1.save("test1.png");
-    let map2 = generate_tile(Corners(0.0, 0.0, 0.0, 0.0), 0.0, 255.0, 0.48);
+    let map2 = generate_tile(Corners(0.0, 0.0, 0.0, 0.0), 0.0, 255.0, 0.6);
     let mut img2 = GrayImage::new(33, 33);
     for x in 0..33 {
         for y in 0..33 {
