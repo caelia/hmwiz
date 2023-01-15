@@ -323,7 +323,8 @@ fn main() {
         }
     }
     */
-    let map1 = generate_megatile(Corners(0.0, 0.0, 0.0, 0.0), 0.0, 376.0, 0.67);
+    let map0 = generate_megatile(Corners(0.0, 0.0, 0.0, 0.0), 0.0, 440.0, 0.64);
+    let map1 = generate_megatile(Corners(0.0, 0.0, 0.0, 0.0), 0.0, 64.0, 0.48);
     /*
     let mut img1 = GrayImage::new(2049, 2049);
     for x in 0..2049 {
@@ -351,7 +352,7 @@ fn main() {
     let mut img1 = GrayImage::new(1025, 1025);
     for x in 0..1025 {
         for y in 0..1025 {
-            let val_ = map1[x * 1025 + y];
+            let val_ = map0[x * 1025 + y] - map1[x * 1025 + y];
             // /*
             let val = if val_ <= 63.0 {
                 0.0
@@ -373,7 +374,9 @@ fn main() {
             img1.put_pixel(x as u32, y as u32, Luma([val]));
         }
     }
-    img1.save("test1.png");
+    // img1.save("test1.png");
+    img1.save("test.png");
+    /*
     let map2 = generate_tile(Corners(0.0, 0.0, 0.0, 0.0), 0.0, 255.0, 0.6);
     let mut img2 = GrayImage::new(33, 33);
     for x in 0..33 {
@@ -383,4 +386,5 @@ fn main() {
         }
     }
     img2.save("test2.png");
+    */
 }
