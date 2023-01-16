@@ -152,6 +152,7 @@ fn set_point(map: &mut Map, x: usize, y: usize, btm: f32, top: f32,
     };
     
     let average = avg(map, x, y, distance, offsets);
+    // println!("average: {}", average);
     /*
     let exponent = rand_exp() * variance;
     // println!("exponent = {}", exponent);
@@ -163,12 +164,31 @@ fn set_point(map: &mut Map, x: usize, y: usize, btm: f32, top: f32,
     // println!("delta = {}", delta);
     // let nuval = average * mult;
     // let nuval = average + delta;
+
+    /* Most recent comment-out
     let diff = top - btm;
     let delta = random_delta(-(diff/4.0)..=(diff/2.0), variance);
     // println!("delta = {}", delta);
     // let nuval = average + delta;
     let nuval = apply_delta(average, delta, btm, top);
     // println!("nuval = {}", nuval);
+    */
+
+    // let delta = thread_rng().gen_range(-variance..=variance);
+    // let nuval = average + delta;
+
+    let delta = thread_rng().gen_range(0.0..=1.0);
+    let nuval_ = variance * delta + (1.0 - variance) * average;
+    let nuval = if nuval_ < 0.0 {
+        println!("WARNING: value out of bounds! {}", nuval_);
+        0.0
+    } else if nuval_ > 1.0 {
+        println!("WARNING: value out of bounds! {}", nuval_);
+        1.0
+    } else {
+        nuval_
+    };
+    
     map.set(x, y, nuval);
 }
 
@@ -221,6 +241,14 @@ fn fill_map(map: &mut Map, corners: Corners, btm: f32, top: f32, roughness: f32)
         distance = distance / 2;
         variance = variance * roughness;
     }    
+
+    for row in 0..size {
+        for col in 0..size {
+            // let v = map.get(row, col);
+            let v = map[row * size + col];
+            map.set(row, col, v * top);
+        }
+    }
 }
 
 fn generate_tile(corners: Corners, btm: f32, top: f32, roughness: f32) -> Map {
@@ -231,8 +259,8 @@ fn generate_tile(corners: Corners, btm: f32, top: f32, roughness: f32) -> Map {
 
 // TEMPORARY, I THINK
 fn generate_megatile(corners: Corners, btm: f32, top: f32, roughness: f32) -> Map {
-    // let mut map = Map::full_map(4_198_401); // 2049x2049
-    let mut map = Map::full_map(1_050_625); // 1025x1025
+    let mut map = Map::full_map(4_198_401); // 2049x2049
+    // let mut map = Map::full_map(1_050_625); // 1025x1025
     fill_map(&mut map, corners, btm, top, roughness);
     map
 }
@@ -323,8 +351,12 @@ fn main() {
         }
     }
     */
-    let map0 = generate_megatile(Corners(0.0, 0.0, 0.0, 0.0), 0.0, 440.0, 0.64);
-    let map1 = generate_megatile(Corners(0.0, 0.0, 0.0, 0.0), 0.0, 64.0, 0.48);
+    /* subtractive approace
+    let map0 = generate_megatile(Corners(0.0, 0.0, 0.0, 0.0), 0.0, 440.0, 0.6);
+    let map1 = generate_megatile(Corners(0.0, 0.0, 0.0, 0.0), 0.0, 64.0, 0.47);
+    */
+    let map0 = generate_megatile(Corners(0.0, 0.0, 0.0, 0.0), 0.0, 64.0, 0.67);
+    let map1 = generate_megatile(Corners(0.0, 0.0, 0.0, 0.0), 0.0, 312.0, 0.51);
     /*
     let mut img1 = GrayImage::new(2049, 2049);
     for x in 0..2049 {
@@ -349,10 +381,11 @@ fn main() {
         }
     }
     */
-    let mut img1 = GrayImage::new(1025, 1025);
-    for x in 0..1025 {
-        for y in 0..1025 {
-            let val_ = map0[x * 1025 + y] - map1[x * 1025 + y];
+    let mut img1 = GrayImage::new(2049, 2049);
+    for x in 0..2049 {
+        for y in 0..2049 {
+            // let val_ = map0[x * 2049 + y] - map1[x * 2049 + y];
+            let val_ = map0[x * 2049 + y] + map1[x * 2049 + y];
             // /*
             let val = if val_ <= 63.0 {
                 0.0
