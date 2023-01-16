@@ -8,266 +8,209 @@ use rand::prelude::*;
 use rand_distr::{Pert, Distribution};
 use image::{GrayImage, Luma};
 
-struct Corners (f32, f32, f32, f32);
+const GLOBAL_MIN: f32 = 0.;
+// const GLOBAL_MAX: f32 = 376.;
+const GLOBAL_MAX: f32 = 313.;
+// const GLOBAL_MAX: f32 = 255.;
+const MAX_SLOPE: f32 = 1.;
 
 #[derive(Debug)]
-enum MapKind {
-    Primary,
-    Meta,
-    Temp,
-    Final,
+enum Dir {
+    H,
+    V
 }
 
 #[derive(Debug)]
-struct Map<T> {
-    kind: MapKind,
+struct Map {
     size: usize,
-    meta_size: usize,
-    data: Vec<T>,
+    data: Vec<f32>,
 }
 
-impl<T> Map<T> {
-    fn new(kind: MapKind, size: usize, meta_size: Option<usize>) -> Self {
-        let meta_size = match meta_size {
-            Some(s) => s,
-            None => size,
-        };
+impl Map {
+    fn new(size: usize) -> Self {
         let length = size * size;
+        /*
         let mut data = Vec::with_capacity(length);
         unsafe {
             data.set_len(length);
         }
-        Map { kind, size, meta_size, data }
+        */
+        let data = vec![0.;length];
+        Map { size, data }
     }
-    fn primary_map(size: usize) -> Self {
-        Map::new(MapKind::Primary, size, None)
-    }
-    fn meta_map(size: usize, meta_size: usize) -> Self {
-        Map::new(MapKind::Meta, size, Some(meta_size))
-    }
-    fn temp_map(size: usize) -> Self {
-        Map::new(MapKind::Temp, size, None)
-    }
-    fn final_map(size: usize) -> Self {
-        Map::new(MapKind::Final, size, None)
-    }
+
     fn len(&self) -> usize {
         self.data.len()
     }
+
     fn size(&self) -> usize {
         self.size
     }
-    fn meta_size(&self) -> usize {
-        self.meta_size
-    }
-    fn get(&self, row: usize, col: usize) -> &T {
+
+    fn get(&self, row: usize, col: usize) -> f32 {
         let idx = row * self.size + col;
-        &self.data[idx]
+        self.data[idx]
     }
-    fn set(&mut self, row: usize, col: usize, value: T) {
+
+    fn set(&mut self, row: usize, col: usize, value: f32) {
         let idx = row * self.size + col;
         self.data[idx] = value;
     }
-}
 
-#[derive(Debug)]
-enum Step {
-    Diamond,
-    Square,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct Bias {
-    value: Option<f32>,
-}
-
-impl Bias {
-    fn new(n: f32) -> Self {
-        Bias { value: Some(n) }
+    fn minmax_from(&self, nrow: usize, ncol: usize, row: usize, col: usize) -> (f32, f32) {
+        let hdiff = if nrow == row {
+            if ncol >= col {
+                ncol - col
+            } else {
+                col - ncol
+            }
+        } else if ncol == col {
+            if nrow >= row {
+                nrow - row
+            } else {
+                row - nrow
+            }
+        } else {
+            panic!("Can't calculate diagonal distance.");
+        } as f32;
+        assert!(hdiff > 0.);
+        let nheight = self.get(nrow, ncol);
+        // (nheight + hdiff * -MAX_SLOPE, nheight + hdiff * MAX_SLOPE)
+        let minfrom = nheight + hdiff * -MAX_SLOPE;
+        let maxfrom = nheight + hdiff * MAX_SLOPE;
+        (minfrom, maxfrom)
     }
-    fn step(&mut self) {
-        match self.value {
-            Some(n) => {
-                let nuval = -(n / 2.0);
-                if nuval.abs() < 1.0 {
-                    self.value = None;
-                } else {
-                    self.value = Some(nuval);
-                }
+
+    fn avg_height(&self, r1: usize, c1: usize, r2: usize, c2: usize) -> f32 {
+        assert!(r1 != r2 || c1 != c2);
+        (self.get(r1, c1) + self.get(r2, c2)) / 2.
+    }
+
+    fn set_point(&mut self, row: usize, col: usize, ndist: usize, dir: Dir) {
+        // println!("{}, {}", row, col);
+        let (nrow1, ncol1, nrow2, ncol2) = match dir {
+            Dir::H => (row, col - ndist, row, col + ndist),
+            Dir::V => (row - ndist, col, row + ndist, col),
+        };
+        let (lmin1, lmax1) = self.minmax_from(nrow1, ncol1, row, col);
+        let (lmin2, lmax2) = self.minmax_from(nrow2, ncol2, row, col);
+        let lo = f32::max(f32::max(lmin1, lmin2), GLOBAL_MIN);
+        let hi = f32::min(f32::min(lmax1, lmax2), GLOBAL_MAX);
+        let avg = self.avg_height(nrow1, ncol1, nrow2, ncol2);
+        // assert!(hi >= lo && avg <= hi && avg >= lo);
+        match Pert::new(lo, hi, avg) {
+            Ok(distro) => {
+                let height = distro.sample(&mut thread_rng()); 
+                self.set(row, col, height);
             },
-            None => (),
-        }
-    }
-}
-
-// fixed-boundary averaging function
-fn avg(map: &mut Map<f32>, x: usize, y: usize, dist: usize, offsets: [(isize, isize); 4]) -> f32 {
-    let size = map.size();
-    let mut result = 0.0;
-    let mut k = 0.0;
-
-    for (p, q) in offsets {
-        let pp = x as isize + p * dist as isize;
-        let qq = y as isize + q * dist as isize;
-        // println!("p: {}, pp {}, q: {}, qq: {}", p, pp, q, qq);
-        if pp >= 0 && pp < size as isize && qq >= 0 && qq < size as isize {
-            let upp = pp as usize;
-            let uqq = qq as usize;
-            result += map.get(upp, uqq);
-        }
-        k += 1.0;    
-    }
-    result / k
-}
-
-fn random_target(btm: f32, top: f32, mode: f32) -> f32 {
-    let distro = Pert::new(btm, top, mode).unwrap();
-    let result = distro.sample(&mut thread_rng());
-    // println!("Random exponent = {}", result);
-    result
-}
-
-// "Folds" the delta if the result would be outside the allowed range.
-fn apply_delta(value: f32, delta: f32, btm: f32, top: f32) -> f32 {
-    if value < btm {
-        println!("WARNING - value outside of allowed range: {}", value);
-        return btm;
-    } else if value > top {
-        println!("WARNING - value outside of allowed range: {}", value);
-        return top;
-    }
-    let candidate = value + delta;
-    if candidate < btm || candidate > top {
-        println!("Tentative result outside allowed range: {}", candidate);
-        value - delta
-    } else {
-        candidate
-    }
-}
-
-
-fn set_point(map: &mut Map<f32>, x: usize, y: usize, btm: f32, top: f32,
-             distance: usize, variance: f32, bias: Bias, step_type: Step) {
-    let offsets = match step_type {
-        Step::Diamond =>  [(-1, -1), (-1, 1), (1, 1), (1, -1)],
-        Step::Square => [(-1, 0), (0, -1), (1, 0), (0, 1)],
-    };
-    
-    let average = avg(map, x, y, distance, offsets);
-
-    let target = match bias.value {
-        // Some(b) => random_target(btm, top, b),
-        Some(b) => random_target(btm, top, f32::max(f32::min(average + b, top), btm)),
-        None => random_target(btm, top, average),
-    };
-
-    let delta = (target - average) * variance;
-    let nuval = average + delta;
-
-    // println!("Average: {}, Target: {}, Delta: {}, Nuval: {}", average, target, delta, nuval);
-    
-    map.set(x, y, nuval);
-}
-
-fn ds_step(map: &mut Map<f32>, btm: f32, top: f32, distance: usize,
-           variance: f32, bias: Bias) {
-    let size = map.size();
-    let distance_ = distance / 2;
-    let limit = size/distance;
-
-    // Diamond Step
-    for x_ in 0..limit {
-        let x = x_ * distance + distance_;
-        for y_ in 0..limit {
-            let y = y_ * distance + distance_;
-            set_point(map, x, y, btm, top, distance_, variance, bias, Step::Diamond);
-        }
-    }
-
-    // Square Step, rows
-    for x_ in 0..limit {
-        let x = x_ * distance + distance_;
-        for y_ in 0..=limit {
-            let y = y_ * distance;
-            set_point(map, x, y, btm, top, distance_, variance, bias, Step::Square);
-        }
-    }
-
-    // Square Step, cols
-    for x_ in 0..=limit {
-        let x = x_ * distance;
-        for y_ in 0..limit {
-            let y = y_ * distance + distance_;
-            set_point(map, x, y, btm, top, distance_, variance, bias, Step::Square);
-        }
-    }
-}
-
-fn fill_map(map: &mut Map<f32>, corners: Corners, btm: f32, top: f32,
-            roughness: f32, mut bias: Bias) {
-    let size = map.size();
-    let limit = size - 1;
-    let Corners(ul, ur, ll, lr) = corners;
-    map.set(0, 0, ul);
-    map.set(0, limit, ur);
-    map.set(limit, 0, ll);
-    map.set(limit, limit, lr);
-    let mut distance = size - 1;
-    let mut variance = 1.0;
-
-    while distance > 1 {
-        ds_step(map, btm, top, distance, variance, bias);
-        distance = distance / 2;
-        variance = variance * roughness;
-        bias.step();
-    }    
-}
-
-fn stretch(map: &mut Map<f32>, btm: f32, top: f32) {
-    let mut lo = top;
-    let mut hi = btm;
-    let mut changed = false;
-
-    for row in 0..map.size() {
-        for col in 0..map.size() {
-            let value = *map.get(row, col);
-            if value < lo {
-                lo = value;
-                changed = true;
-            }
-            if value > hi {
-                hi = value;
-                changed = true;
+            Err(_e) => {
+                // println!("Error creating Pert distro (lo: {}, hi: {}, avg: {}", lo, hi, avg);
+                self.set(row, col, avg);
             }
         }
+
     }
 
-    if changed {
-        let offset = lo - btm;
-        let stretch_factor = (top - btm) / (hi - lo);
+
+    fn fill(&mut self, init_peak: f32) { 
+        let size = self.size();
+        self.set(size / 2, size / 2, init_peak);
+
+        /*
+        // JUST TESTING!
+        for row in [0, 2048] {
+            for col in 0..2049 {
+                self.set(row, col, 0.0);
+            }
+        }
+        for row in 1..2048 {
+            for col in [0, 2049] {
+                self.set(row, col, 0.0);
+            }
+        }
+        */
+
+        let mut fill_rank = |rank: usize, mut step: usize, dir: Dir| {
+            let mut ndist = step / 2;
+            while step > 1 {
+                let mut pos = step / 2;
+                while pos < size {
+                    match dir {
+                        Dir::H => self.set_point(rank, pos, ndist, Dir::H),
+                        Dir::V => self.set_point(pos, rank, ndist, Dir::V),
+                    }
+                    pos += step;
+                }
+                step /= 2;
+                ndist = step / 2;
+            }
+        };
+
+        fill_rank(size / 2, size / 2, Dir::V);
+
+        let mut maj_step = size;
+        let mut maj_pos = maj_step / 2;
+        while maj_step > 1 {
+            let min_step = maj_step / 2;
+            while maj_pos < size {
+                fill_rank(maj_pos, min_step, Dir::H);
+                maj_pos += maj_step;
+            }
+            maj_step /= 2;
+            maj_pos = maj_step / 2;
+            while maj_pos < size {
+                fill_rank(maj_pos, min_step, Dir::V);
+                maj_pos += maj_step;
+            }
+            maj_pos = maj_step / 2;
+        }
+    }
+
+    fn stretch(map: &mut Map, btm: f32, top: f32) {
+        let mut lo = top;
+        let mut hi = btm;
+        let mut changed = false;
+
         for row in 0..map.size() {
             for col in 0..map.size() {
-                let value = *map.get(row, col);
-                let nuval = (value - offset) * stretch_factor;
-                if nuval < btm || nuval > top {
-                    println!("BAD VALUE: {}", nuval);
+                let value = map.get(row, col);
+                if value < lo {
+                    lo = value;
+                    changed = true;
                 }
-                map.set(row, col, nuval);
+                if value > hi {
+                    hi = value;
+                    changed = true;
+                }
+            }
+        }
+
+        if changed {
+            let offset = lo - btm;
+            let stretch_factor = (top - btm) / (hi - lo);
+            for row in 0..map.size() {
+                for col in 0..map.size() {
+                    let value = map.get(row, col);
+                    let nuval = (value - offset) * stretch_factor;
+                    if nuval < btm || nuval > top {
+                        println!("BAD VALUE: {}", nuval);
+                    }
+                    map.set(row, col, nuval);
+                }
             }
         }
     }
 }
-// TEMPORARY, I THINK
-fn generate_megatile(size: usize, corners: Corners, btm: f32, top: f32,
-                     roughness: f32, start_bias: f32) -> Map<f32> {
-    let mut map = Map::primary_map(size);
-    // let mut map = Map::primary_map(1025);
-    fill_map(&mut map, corners, btm, top, roughness, Bias::new(start_bias));
-    stretch(&mut map, btm, top);
+
+
+fn generate_map(size: usize, init_peak: f32) -> Map {
+    let mut map = Map::new(size);
+    map.fill(init_peak);
+    // stretch(&mut map, btm, top);
     map
 }
 
-
+/*
 fn make_composite_map() {
     let map0 = generate_megatile(2049, Corners(0.0, 0.0, 0.0, 0.0), 0.0, 64.0, 0.67, 32.0);
     let map1 = generate_megatile(2049, Corners(0.0, 0.0, 0.0, 0.0), 0.0, 312.0, 0.51, 156.0);
@@ -301,21 +244,22 @@ fn make_composite_map() {
     }
     let _ = img1.save("test.png");
 }
+*/
 
 fn make_one_layer_map() {
-    let map = generate_megatile(2049, Corners(0.0, 0.0, 0.0, 0.0), 0.0, 376.0, 0.7, 300.0);
+    //let map = generate_map(2049, 276.);
+    let map = generate_map(2049, 312.);
     let mut max_val: f32 = 0.0;
     let mut img = GrayImage::new(2049, 2049);
     for row in 0..2049 {
         for col in 0..2049 {
-            let val_ = *map.get(row, col);
+            let val_ = map.get(row, col);
             if val_ < 0.0 || val_ > 376.0 {
                 println!("BAD VALUE: {}", val_);
             }
             if val_ > max_val {
                 max_val = val_;
             }
-            // /*
             let val = if val_ <= 63.0 {
                 0.0
             } else if val_ <= 96.0 {
@@ -331,7 +275,6 @@ fn make_one_layer_map() {
             } else {
                 val_ - 121.0
             } as u8;
-            // */
             // let val = val_ as u8;
             img.put_pixel(row as u32, col as u32, Luma([val]));
         }
@@ -339,6 +282,45 @@ fn make_one_layer_map() {
     let _ = img.save("test.png");
 }
 
+fn make_one_layer_map_less_base_fill(filename: Option<&str>) {
+    //let map = generate_map(2049, 276.);
+    let map = generate_map(2049, 250.);
+    let mut max_val: f32 = 0.0;
+    let mut img = GrayImage::new(2049, 2049);
+    for row in 0..2049 {
+        for col in 0..2049 {
+            let val_ = map.get(row, col);
+            if val_ < 0.0 || val_ > 313.0 {
+                println!("BAD VALUE: {}", val_);
+            }
+            if val_ > max_val {
+                max_val = val_;
+            }
+            let val = if val_ <= 32.0 {
+                0.0
+            } else if val_ <= 48.0 {
+                1.0
+            } else if val_ <= 56.0 {
+                2.0
+            } else if val_ <= 60.0 {
+                3.0
+            } else if val_ <= 62.0 {
+                4.0
+            } else {
+                val_ - 58.0
+            } as u8;
+            // let val = val_ as u8;
+            img.put_pixel(row as u32, col as u32, Luma([val]));
+        }
+    }
+    let save_to = match filename {
+        Some(str) => format!("{}.png", str),
+        None => String::from("test.png"),
+    };
+    let _ = img.save(save_to);
+}
+
+/*
 fn make_quadrant_map() {
     let map_ul = generate_megatile(1025, Corners(0., 0., 0., 188.), 0., 376., 0.7, 300.);
     let map_ur = generate_megatile(1025, Corners(0., 0., 188., 0.), 0., 376., 0.7, 300.);
@@ -385,9 +367,17 @@ fn make_quadrant_map() {
     }
     let _ = img.save("qtest.png");
 }
+*/
 
 fn main() {
+    let args = std::env::args().into_iter().collect::<Vec<String>>();
+    let filename = if args.len() > 1 {
+        Some(args[1].as_str())
+    } else {
+        None
+    };
     // make_composite_map();
     // make_one_layer_map();
-    make_quadrant_map();
+    make_one_layer_map_less_base_fill(filename);
+    // make_quadrant_map();
 }
