@@ -1,16 +1,16 @@
-#![allow(unused_variables)]
+// #![allow(unused_variables)]
 #![allow(unused_imports)]
 #![allow(unused_mut)]
-#![allow(dead_code)]
+// #![allow(dead_code)]
 
 use std::ops::Index;
 use rand::prelude::*;
 use rand_distr::{Pert, Distribution};
-use image::{GrayImage, Luma};
+use image::{GrayImage, GenericImage, ImageBuffer, Luma};
 
 const GLOBAL_MIN: f32 = 0.;
-// const GLOBAL_MAX: f32 = 376.;
-const GLOBAL_MAX: f32 = 313.;
+const GLOBAL_MAX: f32 = 376.;
+// const GLOBAL_MAX: f32 = 313.;
 // const GLOBAL_MAX: f32 = 255.;
 const MAX_SLOPE: f32 = 1.;
 
@@ -210,44 +210,8 @@ fn generate_map(size: usize, init_peak: f32) -> Map {
     map
 }
 
-/*
-fn make_composite_map() {
-    let map0 = generate_megatile(2049, Corners(0.0, 0.0, 0.0, 0.0), 0.0, 64.0, 0.67, 32.0);
-    let map1 = generate_megatile(2049, Corners(0.0, 0.0, 0.0, 0.0), 0.0, 312.0, 0.51, 156.0);
-    let mut img1 = GrayImage::new(2049, 2049);
-    for row in 0..2049 {
-        for col in 0..2049 {
-            let val_ = map0.get(row, col) + map1.get(row, col);
-            if val_ < 0.0 || val_ > 376.0 {
-                println!("BAD VALUE: {}", val_);
-            }
-            // /*
-            let val = if val_ <= 63.0 {
-                0.0
-            } else if val_ <= 96.0 {
-                1.0
-            } else if val_ <= 112.0 {
-                2.0
-            } else if val_ <= 120.0 {
-                3.0
-            } else if val_ <= 124.0 {
-                4.0
-            } else if val_ <= 126.0 {
-                5.0
-            } else {
-                val_ - 121.0
-            } as u8;
-            // */
-            // let val = val_ as u8;
-            img1.put_pixel(row as u32, col as u32, Luma([val]));
-        }
-    }
-    let _ = img1.save("test.png");
-}
-*/
 
-fn make_one_layer_map() {
-    //let map = generate_map(2049, 276.);
+fn make_one_layer_map_hi_bf(filename: String) {
     let map = generate_map(2049, 312.);
     let mut max_val: f32 = 0.0;
     let mut img = GrayImage::new(2049, 2049);
@@ -279,12 +243,12 @@ fn make_one_layer_map() {
             img.put_pixel(row as u32, col as u32, Luma([val]));
         }
     }
-    let _ = img.save("test.png");
+    let _ = img.save(filename);
 }
 
-fn make_one_layer_map_less_base_fill(filename: Option<&str>) {
+fn make_one_layer_map_lo_bf(filename: String) {
     //let map = generate_map(2049, 276.);
-    let map = generate_map(2049, 250.);
+    let map = generate_map(2049, 219.);
     let mut max_val: f32 = 0.0;
     let mut img = GrayImage::new(2049, 2049);
     for row in 0..2049 {
@@ -313,71 +277,34 @@ fn make_one_layer_map_less_base_fill(filename: Option<&str>) {
             img.put_pixel(row as u32, col as u32, Luma([val]));
         }
     }
-    let save_to = match filename {
-        Some(str) => format!("{}.png", str),
-        None => String::from("test.png"),
-    };
-    let _ = img.save(save_to);
+    let _ = img.save(filename);
 }
 
-/*
-fn make_quadrant_map() {
-    let map_ul = generate_megatile(1025, Corners(0., 0., 0., 188.), 0., 376., 0.7, 300.);
-    let map_ur = generate_megatile(1025, Corners(0., 0., 188., 0.), 0., 376., 0.7, 300.);
-    let map_ll = generate_megatile(1025, Corners(0., 188., 0., 0.), 0., 376., 0.7, 300.);
-    let map_lr = generate_megatile(1025, Corners(188., 0., 0., 0.), 0., 376., 0.7, 300.);
-    let mut max_val: f32 = 0.0;
-    let mut img = GrayImage::new(2050, 2050);
-    for (map, hoff, voff) in [
-            (map_ul, 0, 0),
-            (map_ur, 1025, 0),
-            (map_ll, 0, 1025),
-            (map_lr, 1025, 1025)
-        ] {
-        for row in 0..1025 {
-            for col in 0..1025 {
-                let val_ = *map.get(row, col);
-                if val_ < 0.0 || val_ > 376.0 {
-                    println!("BAD VALUE: {}", val_);
-                }
-                if val_ > max_val {
-                    max_val = val_;
-                }
-                // /*
-                let val = if val_ <= 63.0 {
-                    0.0
-                } else if val_ <= 96.0 {
-                    1.0
-                } else if val_ <= 112.0 {
-                    2.0
-                } else if val_ <= 120.0 {
-                    3.0
-                } else if val_ <= 124.0 {
-                    4.0
-                } else if val_ <= 126.0 {
-                    5.0
-                } else {
-                    val_ - 121.0
-                } as u8;
-                // */
-                // let val = val_ as u8;
-                img.put_pixel((row + voff) as u32, (col + hoff) as u32, Luma([val]));
+fn make_one_layer_map_no_bf(filename: String) {
+    let map = generate_map(2049, 250.);
+    let mut img = GrayImage::new(2049, 2049);
+    for row in 0..2049 {
+        for col in 0..2049 {
+            let val_ = map.get(row, col);
+            if val_ < 0.0 || val_ > 255.0 {
+                println!("BAD VALUE: {}", val_);
             }
+            let val = val_ as u8;
+            img.put_pixel(row as u32, col as u32, Luma([val]));
         }
     }
-    let _ = img.save("qtest.png");
+    let _ = img.save(filename);
 }
-*/
+
 
 fn main() {
     let args = std::env::args().into_iter().collect::<Vec<String>>();
     let filename = if args.len() > 1 {
-        Some(args[1].as_str())
+        format!("{}.png", args[1])
     } else {
-        None
+        "hmwiz.png".to_string()
     };
-    // make_composite_map();
-    // make_one_layer_map();
-    make_one_layer_map_less_base_fill(filename);
-    // make_quadrant_map();
+    make_one_layer_map_hi_bf(filename);
+    // make_one_layer_map_lo_bf(filename);
+    // make_one_layer_map_no_bf(filename);
 }
