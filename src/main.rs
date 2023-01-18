@@ -4,15 +4,25 @@
 // #![allow(dead_code)]
 
 use std::ops::Index;
+use std::collections::{HashMap, HashSet};
+use std::cmp::Ordering;
+
 use rand::prelude::*;
 use rand_distr::{Pert, Distribution};
+
+use enterpolation::linear::{Linear, LinearBuilder, LinearError};
+use enterpolation::bezier::{Bezier, BezierBuilder, BezierError};
+use enterpolation::{Generator, DiscreteGenerator};
+
 use image::{GrayImage, GenericImage, ImageBuffer, Luma};
 
+/*
 const GLOBAL_MIN: f32 = 0.;
 const GLOBAL_MAX: f32 = 376.;
 // const GLOBAL_MAX: f32 = 313.;
 // const GLOBAL_MAX: f32 = 255.;
 const MAX_SLOPE: f32 = 1.;
+*/
 
 #[derive(Debug)]
 enum Dir {
@@ -20,291 +30,322 @@ enum Dir {
     V
 }
 
+#[derive(Debug, Clone, Copy)]
+struct Config {
+    max_height: f32,
+    min_height: f32,    
+    max_slope: f32,
+    size: (usize, usize),
+    margin_width: usize,
+    margin_height: f32,
+    n_hi: usize,
+    hi_min: f32,
+    hi_max: f32,
+    n_lo: usize,
+    lo_min: f32,
+    lo_max: f32,
+}
+
+impl Config {
+    fn default(width: usize, height: usize,
+               n_hi: usize, hi_min: f32, hi_max: Option<f32>,
+               n_lo: usize, lo_min: Option<f32>, lo_max: f32)
+                -> Self {
+        Config {
+            max_height: 255.,
+            min_height: 0.,    
+            max_slope: 1.,
+            size: (height, width),
+            margin_width: 16,
+            margin_height: 0.,
+            n_hi,
+            hi_min,
+            hi_max: hi_max.unwrap_or(255.),
+            n_lo,
+            lo_min: lo_min.unwrap_or(0.),
+            lo_max,
+        }
+    }
+}
+
+trait Flat2d {
+    type DataPoint;
+    fn rows(&self) -> usize;
+    fn cols(&self) -> usize;
+    fn get_index(&self, row: usize, col: usize) -> usize {
+        row * self.rows() + col
+    }
+    fn data(&self) -> Vec<Self::DataPoint>;
+    fn get(&self, row: usize, col: usize) -> Self::DataPoint {
+        let idx = self.get_index(row, col);
+        self.data()[idx]
+    }
+    fn set(&mut self, row: usize, col: usize, value: Self::DataPoint) {
+        let idx = self.get_index(row, col);
+        self.data()[idx] = value;
+    }
+}
+
+#[derive(Debug, Clone)]
+struct IndexedGrid<T> {
+    row_idxs: Vec<usize>,
+    col_idxs: Vec<usize>,
+    data: Vec<T>,
+}
+
+impl<T> Flat2d for IndexedGrid<T> {
+    type DataPoint = T;
+    fn rows(&self) -> usize {
+        self.row_idxs.len()
+    }
+    fn cols(&self) -> usize {
+        self.col_idxs.len()
+    }
+    fn get_index(&self, row: usize, col: usize) -> usize {
+        let real_row = match self.row_idxs.binary_search(&row) {
+            Ok(rr) => rr,
+            Err(e) => panic!("Invalid row index: {} <<{:?}>>", row, e),
+        };
+        let real_col = match self.col_idxs.binary_search(&col) {
+            Ok(rr) => rr,
+            Err(e) => panic!("Invalid column index: {} <<{:?}>>", col, e),
+        };
+        real_row * self.rows() + real_col
+    }
+    fn data(&self) -> Vec<T> { self.data }
+}
+
+impl<T: Clone> IndexedGrid<T> {
+    fn from(mut points: Vec<(usize, usize, T)>, default: T) -> Self {
+        let mut row_idxs = Vec::new();
+        let mut col_idxs = Vec::new();
+        let seen = Vec::new();
+        for (r, c, _) in points.iter() {
+            row_idxs.push(*r);
+            col_idxs.push(*c);
+            assert!(!seen.contains(&(r, c)));
+            seen.push((r, c));
+        }
+        row_idxs.sort_unstable();
+        row_idxs.dedup();
+        col_idxs.sort_unstable();
+        col_idxs.dedup();
+        let cap = row_idxs.len() * col_idxs.len();
+        let mut data = vec![default; cap];
+        for (r, c, h) in points.iter() {
+            let real_row = row_idxs.binary_search(&r).expect("Invalid row index in IndexedGrid::from().");
+            let real_col = col_idxs.binary_search(&r).expect("Invalid col index in IndexedGrid::from().");
+            let idx = real_row * row_idxs.len() + real_col;
+            data[idx] = *h;
+        }
+        IndexedGrid { row_idxs, col_idxs, data }
+    }
+}
+
 #[derive(Debug)]
-struct Map {
-    size: usize,
+struct SampledSlices {
+    rows: usize,
+    cols: usize,
+    data: HashMap<usize, HashMap<usize, Option<f32>>>,
+}
+
+#[derive(Debug)]
+struct CompleteSlices {
+    rows: usize,
+    cols: usize,
+    data: Vec<Vec<f32>>,
+}
+
+impl Flat2d for SampledSlices {
+    type DataPoint = Option<f32>;
+    fn rows(&self) -> usize { self.rows }
+    fn cols(&self) -> usize { self.cols }
+    fn data(&self) -> HashMap<usize, HashMap<usize, Option<f32>>> { self.data }
+}
+
+impl Flat2d for CompleteSlices {
+    type DataPoint = f32;
+    fn rows(&self) -> usize { self.rows }
+    fn cols(&self) -> usize { self.cols }
+    fn data(&self) -> Vec<Vec<f32>> { self.data }
+}
+// to prevent endless loops when populating layout grid
+const LAYOUT_MAX_TRIES: u8 = 10;
+
+#[derive(Debug)]
+struct Layout {
+    rows: usize,
+    cols: usize,
+    guidepoints: Vec<Option<f32>>,
+    hslices: HashMap<usize, Vec<f32>>,
+    vslices: HashMap<usize, Vec<f32>>,
+    grid: Vec<(usize, f32)>,
+}
+
+impl Flat2d for Layout {
+    type DataPoint = (usize, f32);
+    fn rows(&self) -> usize { self.rows }
+    fn cols(&self) -> usize { self.cols }
+    fn data(&self) -> Vec<(usize, f32)> { self.grid }
+}
+
+impl Layout {
+    fn new() -> Self {
+        Layout {
+            rows: 0,
+            cols: 0,
+            guidepoints: Vec::new(),
+            hslices: HashMap::new(),
+            vslices: HashMap::new(),
+            grid: Vec::new()
+        }
+    }
+    fn set_guide_points(&mut self, config: Config) {
+        let hi_points = HashSet::new();  
+        let lo_points = HashSet::new();  
+        let trng = thread_rng();
+
+        let excess_tries_msg = "
+            Exceeded maximum number of tries to set unique layout points.\n
+            This is probably just a fluke, but if it happens repeatedly,\n
+            please file a bug report.
+        ";
+        for _ in 0..config.n_hi {
+            let row = trng.gen_range(0..self.rows);
+            let col = trng.gen_range(0..self.cols);
+            let tries = 1;
+            loop {
+                if hi_points.insert((row, col)) {
+                    break;
+                }
+                tries += 1;
+                if tries > LAYOUT_MAX_TRIES {
+                    panic!("{}", excess_tries_msg);
+                }
+            }
+        }
+        for _ in 0..config.n_lo {
+            let row = trng.gen_range(0..self.rows);
+            let col = trng.gen_range(0..self.cols);
+            let tries = 1;
+            loop {
+                if lo_points.insert((row, col)) {
+                    break;
+                }
+                tries += 1;
+                if tries > LAYOUT_MAX_TRIES {
+                    panic!("{}", excess_tries_msg);
+                }
+            }
+        }
+        if !(hi_points.is_disjoint(&lo_points)) {
+            panic!("hi_points & lo_points set contain points in common.\n
+                    This is probably just a fluke, but if it happens\n
+                    repeatedly, please file a bug report.");
+        }
+        
+        for loc in hi_points.iter() {
+            let height = trng.gen_range(config.hi_min..=config.hi_max);
+            self.insert(loc, height);
+        }
+        for loc in lo_points.iter() {
+            let height = trng.gen_range(config.lo_min..=config.lo_max);
+            self.insert(loc, height);
+        }
+    }
+    fn reconcile(&mut self) {
+        
+    }
+}
+
+#[derive(Debug)]
+struct SlicePoints {
     data: Vec<f32>,
 }
 
-impl Map {
-    fn new(size: usize) -> Self {
-        let length = size * size;
-        /*
-        let mut data = Vec::with_capacity(length);
-        unsafe {
-            data.set_len(length);
-        }
-        */
-        let data = vec![0.;length];
-        Map { size, data }
+impl Generator<usize> for SlicePoints {
+    type Output = f32;
+    fn gen(&self, idx: usize) -> f32 {
+        self.data[idx]
     }
+}
 
+impl DiscreteGenerator for SlicePoints {
     fn len(&self) -> usize {
         self.data.len()
     }
+}
 
-    fn size(&self) -> usize {
-        self.size
+#[derive(Debug)]
+struct RefGrid {
+    dir: Dir,
+    slices: HashMap<usize, Vec<f32>>,
+}
+
+impl RefGrid {
+    fn new(dir: Dir) -> Self {
+        RefGrid { dir, slices: HashMap::new() }
     }
-
+    fn keys(&self) -> Vec<usize> {
+        let kk: Vec<usize> = self.slices.keys().map(|k| *k).collect();
+        kk.sort();
+        kk
+    }
     fn get(&self, row: usize, col: usize) -> f32 {
-        let idx = row * self.size + col;
-        self.data[idx]
-    }
-
-    fn set(&mut self, row: usize, col: usize, value: f32) {
-        let idx = row * self.size + col;
-        self.data[idx] = value;
-    }
-
-    fn minmax_from(&self, nrow: usize, ncol: usize, row: usize, col: usize) -> (f32, f32) {
-        let hdiff = if nrow == row {
-            if ncol >= col {
-                ncol - col
-            } else {
-                col - ncol
-            }
-        } else if ncol == col {
-            if nrow >= row {
-                nrow - row
-            } else {
-                row - nrow
-            }
-        } else {
-            panic!("Can't calculate diagonal distance.");
-        } as f32;
-        assert!(hdiff > 0.);
-        let nheight = self.get(nrow, ncol);
-        // (nheight + hdiff * -MAX_SLOPE, nheight + hdiff * MAX_SLOPE)
-        let minfrom = nheight + hdiff * -MAX_SLOPE;
-        let maxfrom = nheight + hdiff * MAX_SLOPE;
-        (minfrom, maxfrom)
-    }
-
-    fn avg_height(&self, r1: usize, c1: usize, r2: usize, c2: usize) -> f32 {
-        assert!(r1 != r2 || c1 != c2);
-        (self.get(r1, c1) + self.get(r2, c2)) / 2.
-    }
-
-    fn set_point(&mut self, row: usize, col: usize, ndist: usize, dir: Dir) {
-        // println!("{}, {}", row, col);
-        let (nrow1, ncol1, nrow2, ncol2) = match dir {
-            Dir::H => (row, col - ndist, row, col + ndist),
-            Dir::V => (row - ndist, col, row + ndist, col),
-        };
-        let (lmin1, lmax1) = self.minmax_from(nrow1, ncol1, row, col);
-        let (lmin2, lmax2) = self.minmax_from(nrow2, ncol2, row, col);
-        let lo = f32::max(f32::max(lmin1, lmin2), GLOBAL_MIN);
-        let hi = f32::min(f32::min(lmax1, lmax2), GLOBAL_MAX);
-        let avg = self.avg_height(nrow1, ncol1, nrow2, ncol2);
-        // assert!(hi >= lo && avg <= hi && avg >= lo);
-        match Pert::new(lo, hi, avg) {
-            Ok(distro) => {
-                let height = distro.sample(&mut thread_rng()); 
-                self.set(row, col, height);
-            },
-            Err(_e) => {
-                // println!("Error creating Pert distro (lo: {}, hi: {}, avg: {}", lo, hi, avg);
-                self.set(row, col, avg);
-            }
-        }
-
-    }
-
-
-    fn fill(&mut self, init_peak: f32) { 
-        let size = self.size();
-        self.set(size / 2, size / 2, init_peak);
-
-        /*
-        // JUST TESTING!
-        for row in [0, 2048] {
-            for col in 0..2049 {
-                self.set(row, col, 0.0);
-            }
-        }
-        for row in 1..2048 {
-            for col in [0, 2049] {
-                self.set(row, col, 0.0);
-            }
-        }
-        */
-
-        let mut fill_rank = |rank: usize, mut step: usize, dir: Dir| {
-            let mut ndist = step / 2;
-            while step > 1 {
-                let mut pos = step / 2;
-                while pos < size {
-                    match dir {
-                        Dir::H => self.set_point(rank, pos, ndist, Dir::H),
-                        Dir::V => self.set_point(pos, rank, ndist, Dir::V),
-                    }
-                    pos += step;
-                }
-                step /= 2;
-                ndist = step / 2;
-            }
-        };
-
-        fill_rank(size / 2, size / 2, Dir::V);
-
-        let mut maj_step = size;
-        let mut maj_pos = maj_step / 2;
-        while maj_step > 1 {
-            let min_step = maj_step / 2;
-            while maj_pos < size {
-                fill_rank(maj_pos, min_step, Dir::H);
-                maj_pos += maj_step;
-            }
-            maj_step /= 2;
-            maj_pos = maj_step / 2;
-            while maj_pos < size {
-                fill_rank(maj_pos, min_step, Dir::V);
-                maj_pos += maj_step;
-            }
-            maj_pos = maj_step / 2;
+        match self.slices.get(&row) {
+            Some(vec) => vec[col],
+            None => panic!("Attempted to retrieve with nonexistent key.")
         }
     }
-
-    fn stretch(map: &mut Map, btm: f32, top: f32) {
-        let mut lo = top;
-        let mut hi = btm;
-        let mut changed = false;
-
-        for row in 0..map.size() {
-            for col in 0..map.size() {
-                let value = map.get(row, col);
-                if value < lo {
-                    lo = value;
-                    changed = true;
-                }
-                if value > hi {
-                    hi = value;
-                    changed = true;
-                }
-            }
-        }
-
-        if changed {
-            let offset = lo - btm;
-            let stretch_factor = (top - btm) / (hi - lo);
-            for row in 0..map.size() {
-                for col in 0..map.size() {
-                    let value = map.get(row, col);
-                    let nuval = (value - offset) * stretch_factor;
-                    if nuval < btm || nuval > top {
-                        println!("BAD VALUE: {}", nuval);
-                    }
-                    map.set(row, col, nuval);
-                }
-            }
-        }
+    fn add_row(&mut self, row: usize, values: Vec<f32>) {
+        assert_eq!(self.slices.insert(row, values), None);
     }
 }
 
-
-fn generate_map(size: usize, init_peak: f32) -> Map {
-    let mut map = Map::new(size);
-    map.fill(init_peak);
-    // stretch(&mut map, btm, top);
-    map
+#[derive(Debug)]
+struct Map {
+    rows: usize,
+    cols: usize,
+    data: Vec<f32>,
 }
 
+impl Flat2d for Map {
+    type DataPoint = f32;
+    fn rows(&self) -> usize { self.rows }
+    fn cols(&self) -> usize { self.cols }
+    fn data(&self) -> Vec<f32> { self.data }
+}
 
-fn make_one_layer_map_hi_bf(filename: String) {
-    let map = generate_map(2049, 312.);
-    let mut max_val: f32 = 0.0;
-    let mut img = GrayImage::new(2049, 2049);
-    for row in 0..2049 {
-        for col in 0..2049 {
-            let val_ = map.get(row, col);
-            if val_ < 0.0 || val_ > 376.0 {
-                println!("BAD VALUE: {}", val_);
-            }
-            if val_ > max_val {
-                max_val = val_;
-            }
-            let val = if val_ <= 63.0 {
-                0.0
-            } else if val_ <= 96.0 {
-                1.0
-            } else if val_ <= 112.0 {
-                2.0
-            } else if val_ <= 120.0 {
-                3.0
-            } else if val_ <= 124.0 {
-                4.0
-            } else if val_ <= 126.0 {
-                5.0
-            } else {
-                val_ - 121.0
-            } as u8;
-            // let val = val_ as u8;
-            img.put_pixel(row as u32, col as u32, Luma([val]));
-        }
+impl Map {
+    fn new(rows: usize, cols: usize) -> Self {
+        let data = vec![0.; rows * cols];
+        Map { rows, cols, data }
     }
-    let _ = img.save(filename);
 }
 
-fn make_one_layer_map_lo_bf(filename: String) {
-    //let map = generate_map(2049, 276.);
-    let map = generate_map(2049, 219.);
-    let mut max_val: f32 = 0.0;
-    let mut img = GrayImage::new(2049, 2049);
-    for row in 0..2049 {
-        for col in 0..2049 {
-            let val_ = map.get(row, col);
-            if val_ < 0.0 || val_ > 313.0 {
-                println!("BAD VALUE: {}", val_);
-            }
-            if val_ > max_val {
-                max_val = val_;
-            }
-            let val = if val_ <= 32.0 {
-                0.0
-            } else if val_ <= 48.0 {
-                1.0
-            } else if val_ <= 56.0 {
-                2.0
-            } else if val_ <= 60.0 {
-                3.0
-            } else if val_ <= 62.0 {
-                4.0
-            } else {
-                val_ - 58.0
-            } as u8;
-            // let val = val_ as u8;
-            img.put_pixel(row as u32, col as u32, Luma([val]));
-        }
+#[derive(Debug)]
+struct MapSystem {
+    config: Config,
+    layout: Layout,
+    ref_h: RefGrid,
+    ref_v: RefGrid,
+    hslices: Map,
+    vslices: Map,
+}
+
+impl MapSystem {
+    fn new(config: Config) -> Self {
+        let layout = Layout::new();
+        let ref_h = RefGrid::new(Dir::H);
+        let ref_v = RefGrid::new(Dir::V);
+        let (h, w) = config.size;
+        let hslices = Map::new(h, w);
+        let vslices = Map::new(w, h);
+        MapSystem { config, layout, ref_h, ref_v, hslices, vslices }
     }
-    let _ = img.save(filename);
-}
 
-fn make_one_layer_map_no_bf(filename: String) {
-    let map = generate_map(2049, 250.);
-    let mut img = GrayImage::new(2049, 2049);
-    for row in 0..2049 {
-        for col in 0..2049 {
-            let val_ = map.get(row, col);
-            if val_ < 0.0 || val_ > 255.0 {
-                println!("BAD VALUE: {}", val_);
-            }
-            let val = val_ as u8;
-            img.put_pixel(row as u32, col as u32, Luma([val]));
-        }
-    }
-    let _ = img.save(filename);
 }
-
 
 fn main() {
-    let args = std::env::args().into_iter().collect::<Vec<String>>();
-    let filename = if args.len() > 1 {
-        format!("{}.png", args[1])
-    } else {
-        "hmwiz.png".to_string()
-    };
-    make_one_layer_map_hi_bf(filename);
-    // make_one_layer_map_lo_bf(filename);
-    // make_one_layer_map_no_bf(filename);
+    println!("This is just a gotdan placeholder.");
 }
