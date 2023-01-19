@@ -162,6 +162,7 @@ impl<T: Clone> IndexedGrid<T> {
         row_idxs.dedup();
         col_idxs.sort_unstable();
         col_idxs.dedup();
+        let iter_q = VecDeque::new();
         let cap = row_idxs.len() * col_idxs.len();
         let mut data = vec![default; cap];
         for (r, c, h) in points.iter() {
@@ -177,8 +178,7 @@ impl<T: Clone> IndexedGrid<T> {
         IndexedGrid {
             row_idxs,
             col_idxs,
-            iter_pos: 0,
-            iter_dir: Dir::X,
+            iter_q,
             default,
             data,
         }
@@ -186,39 +186,98 @@ impl<T: Clone> IndexedGrid<T> {
     pub fn clone_blank(&self) -> Self {
         let row_idxs = self.row_idxs.clone();
         let col_idxs = self.col_idxs.clone();
+        let iter_q = VecDeque::new();
         let cap = row_idxs.len() * col_idxs.len();
         let default = self.default,
         let data = vec![default; cap];
         IndexedGrid {
             row_idxs,
             col_idxs,
+            iter_q,
             default,
             data,
         }
     }
     pub fn setup_iteration(&mut self, spec: IterSpec) {
-        let q = VecDeque::new();
+        self.iter_q.clear();
         match spec {
             IterSpec::Edges => {
                 for col in self.col_idxs {
-                    q.push_back((0, col));
+                    self.iter_q.push_back((0, col));
                 }
-                let ri_len = self.row_idxs.len();
+                let ri_limit= self.row_idxs.len() - 1;
                 let last_col = self.col_idxs.last().unwrap();
-                for row in &self.row_idxs[1..(ri_len - 1)] {
-                    q.push_back((*row, 0));
-                    q.push_back((*row, last_col));
+                for row in &self.row_idxs[1..ri_limit] {
+                    self.iter_q.push_back((*row, 0));
+                    self.iter_q.push_back((*row, last_col));
                 }
                 let last_row = self.row_idxs.last().unwrap();
                 for col in self.col_idxs {
-                    q.push_back((last_row, col));
+                    self.iter_q.push_back((last_row, col));
                 }
             },
-            IterSpec::AllInner => {},
-            IterSpec::From(row, col, dir) => {},
-            IterSpec::Range((r1, c1), (r2, c2)) => {},
+            IterSpec::AllInner => {
+                let ri_limit = self.row_idxs.len() - 1;
+                let ci_limit = self.col_idxs.len() - 1;
+                for row in &self.row_idxs[1..ri_limit] {
+                    for col in &self.col_idxs[1..ci_limit] {
+                        self.iter_q.push_back((*row, *col))
+                    }
+                }
+            },
+            IterSpec::From(row, col, dir) => {
+                let ri_start = self.row_idxs.binary_search(&row).unwrap();
+                let ci_start = self.col_idxs.binary_search(&col).unwrap();
+                match dir {
+                    Dir::N => {
+                        for meta_idx in (0..ri_start).rev() {
+                            self.iter_q.push_back((self.row_idxs[meta_idx], ci_start));
+                        }
+                    },
+                    Dir::S => {
+                        for meta_idx in ri_start..self.row_idxs.len() {
+                            self.iter_q.push_back((self.row_idxs[meta_idx], ci_start));
+                        }
+                    },
+                    Dir::E => {
+                        for meta_idx in ci_start..self.col_idxs.len() {
+                            self.iter_q.push_back((ri_start, self.col_idxs[meta_idx]));
+                        }
+                    },
+                    Dir::W => {
+                        for meta_idx in (0..ci_start).rev() {
+                            self.iter_q.push_back((ri_start, self.col_idxs[meta_idx]));
+                        }
+                    },
+                    _ => panic!("Invalid iteration direction: {:?}", dir),
+                }
+            },
+            IterSpec::Range((r1, c1), (r2, c2)) => {
+                if r1 == r2 {
+                    if c1 > c2 {
+                        for meta_idx in (c2..c1).rev() {
+                            self.iter_q.push_back((r1, self.col_idxs[meta_idx]));
+                        }
+                    } else {
+                        for col in &self.col_idxs[c1..c2] {
+                            self.iter_q.push_back((r1, *col));
+                        }
+                    }
+                } else if c1 == c2 {
+                    if r1 > r2 {
+                        for meta_idx in (r2..r1).rev() {
+                            self.iter_q.push_back((self.row_idxs[meta_idx], c1));
+                        }
+                    } else {
+                        for row in &self.row_idxs[r1..r2] {
+                            self.iter_q.push_back((*row, c1));
+                        }
+                    }
+                } else {
+                    panic!("Can't iterate over range ({}, {}) - ({}, {})", r1, c1, r2, c2 );
+                }
+            },
         }
-        self.iter_q = q;
     }
 }
 
