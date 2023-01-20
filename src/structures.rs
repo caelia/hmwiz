@@ -47,7 +47,7 @@ pub enum IterPos {
 }
 
 #[derive(Debug)]
-pub enum IterSpec {
+pub enum SeqSpec {
     Edges,
     AllInner,
     Row(usize),
@@ -81,19 +81,22 @@ pub trait Flat2d {
 pub struct IndexedGrid<T> {
     row_idxs: Vec<usize>,
     col_idxs: Vec<usize>,
-    iter_q: VecDeque<(usize, usize)>,
+    sequence: Vec<(usize, usize)>,
     default: T,
     data: Vec<T>,
 }
 
 impl<T> Flat2d for IndexedGrid<T> {
     type DataPoint = T;
+
     fn rows(&self) -> usize {
         self.row_idxs.len()
     }
+
     fn cols(&self) -> usize {
         self.col_idxs.len()
     }
+
     fn get_index(&self, row: usize, col: usize) -> usize {
         let real_row = match self.row_idxs.binary_search(&row) {
             Ok(rr) => rr,
@@ -105,28 +108,12 @@ impl<T> Flat2d for IndexedGrid<T> {
         };
         real_row * self.rows() + real_col
     }
+
     fn data(&self) -> Vec<T> {
         self.data
     }
 }
 
-impl<T> Iterator for IndexedGrid<T> {
-    type Item = (usize, usize);
-    // Iterates over the row or column indexes, depending on self.iter_dir
-    // See also IndexedGrid::setup_iteration.
-    fn next(&mut self) -> Option<Self::Item> {
-        self.iter_q.pop_front()
-    }
-}
-
-// This is used only to verify that the layout grids match
-impl<T> PartialEq for IndexedGrid<T> {
-    fn eq(&self, other: &Self) -> bool {
-        self.row_idxs == other.row_idxs
-            && self.col_idxs == other.col_idxs
-            && self.data.len() == other.data.len()
-    }
-}
 
 impl<T: Clone> IndexedGrid<T> {
     pub fn from(mut points: Vec<(usize, usize, T)>, default: T) -> Self {
@@ -143,7 +130,7 @@ impl<T: Clone> IndexedGrid<T> {
         row_idxs.dedup();
         col_idxs.sort_unstable();
         col_idxs.dedup();
-        let iter_q = VecDeque::new();
+        let sequence = Vec::new();
         let cap = row_idxs.len() * col_idxs.len();
         let mut data = vec![default; cap];
         for (r, c, h) in points.iter() {
@@ -159,115 +146,137 @@ impl<T: Clone> IndexedGrid<T> {
         IndexedGrid {
             row_idxs,
             col_idxs,
-            iter_q,
+            sequence,
             default,
             data,
         }
     }
+
     pub fn clone_blank(&self) -> Self {
         let row_idxs = self.row_idxs.clone();
         let col_idxs = self.col_idxs.clone();
-        let iter_q = VecDeque::new();
+        let sequence = Vec::new();
         let cap = row_idxs.len() * col_idxs.len();
         let default = self.default,
         let data = vec![default; cap];
         IndexedGrid {
             row_idxs,
             col_idxs,
-            iter_q,
+            sequence,
             default,
             data,
         }
     }
-    pub fn setup_iteration(&mut self, spec: IterSpec) {
-        self.iter_q.clear();
+
+    pub fn set_sequence(&mut self, spec: SeqSpec) {
+        self.sequence.clear();
         match spec {
-            IterSpec::Edges => {
+            SeqSpec::Edges => {
                 for col in self.col_idxs {
-                    self.iter_q.push_back((0, col));
+                    self.sequence.push((0, col));
                 }
                 let ri_limit= self.row_idxs.len() - 1;
                 let last_col = self.col_idxs.last().unwrap();
                 for row in &self.row_idxs[1..ri_limit] {
-                    self.iter_q.push_back((*row, 0));
-                    self.iter_q.push_back((*row, last_col));
+                    self.sequence.push((*row, 0));
+                    self.sequence.push((*row, last_col));
                 }
                 let last_row = self.row_idxs.last().unwrap();
                 for col in self.col_idxs {
-                    self.iter_q.push_back((last_row, col));
+                    self.sequence.push((last_row, col));
                 }
             },
-            IterSpec::AllInner => {
+            SeqSpec::AllInner => {
                 let ri_limit = self.row_idxs.len() - 1;
                 let ci_limit = self.col_idxs.len() - 1;
                 for row in &self.row_idxs[1..ri_limit] {
                     for col in &self.col_idxs[1..ci_limit] {
-                        self.iter_q.push_back((*row, *col))
+                        self.sequence.push((*row, *col));
                     }
                 }
             },
-            IterSpec::Row(row) => {
+            SeqSpec::Row(row) => {
                 for col in self.col_idxs {
-                    self.iter_q.push_back((row, col));
+                    self.sequence.push((row, col));
                 }
             },
-            IterSpec::Col(col) => {
+            SeqSpec::Col(col) => {
                 for row in self.row_idxs {
-                    self.iter_q.push_back((row, col));
+                    self.sequence.push((row, col));
                 }
             },
-            IterSpec::From(row, col, dir) => {
+            SeqSpec::From(row, col, dir) => {
                 let ri_start = self.row_idxs.binary_search(&row).unwrap();
                 let ci_start = self.col_idxs.binary_search(&col).unwrap();
                 match dir {
                     Dir::N => {
                         for meta_idx in (0..ri_start).rev() {
-                            self.iter_q.push_back((self.row_idxs[meta_idx], ci_start));
+                            self.sequence.push((self.row_idxs[meta_idx], ci_start));
                         }
                     },
                     Dir::S => {
                         for meta_idx in ri_start..self.row_idxs.len() {
-                            self.iter_q.push_back((self.row_idxs[meta_idx], ci_start));
+                            self.sequence.push((self.row_idxs[meta_idx], ci_start));
                         }
                     },
                     Dir::E => {
                         for meta_idx in ci_start..self.col_idxs.len() {
-                            self.iter_q.push_back((ri_start, self.col_idxs[meta_idx]));
+                            self.sequence.push((ri_start, self.col_idxs[meta_idx]));
                         }
                     },
                     Dir::W => {
                         for meta_idx in (0..ci_start).rev() {
-                            self.iter_q.push_back((ri_start, self.col_idxs[meta_idx]));
+                            self.sequence.push((ri_start, self.col_idxs[meta_idx]));
                         }
                     },
                     _ => panic!("Invalid iteration direction: {:?}", dir),
                 }
             },
-            IterSpec::Range((r1, c1), (r2, c2)) => {
+            SeqSpec::Range((r1, c1), (r2, c2)) => {
                 if r1 == r2 {
                     if c1 > c2 {
                         for meta_idx in (c2..c1).rev() {
-                            self.iter_q.push_back((r1, self.col_idxs[meta_idx]));
+                            self.sequence.push((r1, self.col_idxs[meta_idx]));
                         }
                     } else {
                         for col in &self.col_idxs[c1..c2] {
-                            self.iter_q.push_back((r1, *col));
+                            self.sequence.push((r1, *col));
                         }
                     }
                 } else if c1 == c2 {
                     if r1 > r2 {
                         for meta_idx in (r2..r1).rev() {
-                            self.iter_q.push_back((self.row_idxs[meta_idx], c1));
+                            self.sequence.push((self.row_idxs[meta_idx], c1));
                         }
                     } else {
                         for row in &self.row_idxs[r1..r2] {
-                            self.iter_q.push_back((*row, c1));
+                            self.sequence.push((*row, c1));
                         }
                     }
                 } else {
                     panic!("Can't iterate over range ({}, {}) - ({}, {})", r1, c1, r2, c2 );
                 }
             },
+        }
+    }
+
+    pub fn indices(&self) -> (Vec<usize>, Vec<usize>) {
+        (self.row_idxs, self.col_idxs)
+    }
+
+    pub fn seq_find_nearest<F>(&self, f: F) -> Option<(usize, usize, f32)>
+            where F: Fn(usize, usize) -> bool {
+        for (row, col) in self.sequence {
+            if f(row, col) {
+                return Some((row, col));
+            }
+        }
+        None
+    }
+
+    pub fn seq_do<F>(&mut self, f: F) where F: FnMut(usize, usize) {
+         for (row, col) in self.sequence {
+            f(row, col);
         }
     }
 }

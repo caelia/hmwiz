@@ -15,7 +15,7 @@ use enterpolation::linear::{Linear, LinearBuilder, LinearError};
 use enterpolation::{DiscreteGenerator, Generator};
 
 use crate::config::Config;
-use crate::structures::{Dir, IterSpec, Flat2d, IndexedGrid};
+use crate::structures::{Dir, SeqSpec, Flat2d, IndexedGrid};
 
 #[derive(Debug)]
 struct SampledSlices {
@@ -173,8 +173,7 @@ impl Layout {
 
         let hgrid = IndexedGrid::from(all_points, None);
         // Set edge points to margin height
-        hgrid.setup_iteration(IterSpec::Edges);
-        for (row, col) in hgrid {
+        for (row, col) in hgrid.sequence(SeqSpec::Edges) {
             hgrid.set(row, col, Some(config.margin_height));
         }
 
@@ -192,8 +191,17 @@ impl Layout {
     }
 
     pub fn set_crossings(&mut self) {
+        let (row_idxs, col_idxs) = self.hgrid.indices();
+        let rlimit = row_idxs.len() - 1;
+        let climit = col_idxs.len() - 1;
         // Horizontal
+        for row in &row_idxs[1..rlimit] {
+            
+        }
         // Vertical
+        for col in &col_idxs[1..climit] {
+            
+        }
     }
 }
 // }
