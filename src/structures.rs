@@ -50,6 +50,8 @@ pub enum IterPos {
 pub enum IterSpec {
     Edges,
     AllInner,
+    Row(usize),
+    Col(usize),
     From(usize, usize, Dir),
     Range((usize, usize), (usize, usize)),
 }
@@ -109,32 +111,11 @@ impl<T> Flat2d for IndexedGrid<T> {
 }
 
 impl<T> Iterator for IndexedGrid<T> {
-    type Item = usize;
+    type Item = (usize, usize);
     // Iterates over the row or column indexes, depending on self.iter_dir
     // See also IndexedGrid::setup_iteration.
     fn next(&mut self) -> Option<Self::Item> {
-        let data = match self.iter_dir {
-            Dir::H | Dir::E => self.col_idxs,
-            Dir::V | Dir::S => self.row_idxs,
-            Dir::W => {
-                let data_ = self.col_idxs.clone();
-                data_.reverse();
-                data_
-            },
-            Dir::N => {
-                let data_ = self.row_idxs.clone();
-                data_.reverse();
-                data_
-            },
-            Dir::X => panic!("iter_dir is set to Dir::X!"),
-        };
-        if self.iter_pos >= data.len() {
-            None
-        } else {
-            let result = Some(data[self.iter_pos]);
-            self.iter_pos += 1;
-            result
-        }
+        self.iter_q.pop_front()
     }
 }
 
@@ -223,6 +204,16 @@ impl<T: Clone> IndexedGrid<T> {
                     for col in &self.col_idxs[1..ci_limit] {
                         self.iter_q.push_back((*row, *col))
                     }
+                }
+            },
+            IterSpec::Row(row) => {
+                for col in self.col_idxs {
+                    self.iter_q.push_back((row, col));
+                }
+            },
+            IterSpec::Col(col) => {
+                for row in self.row_idxs {
+                    self.iter_q.push_back((row, col));
                 }
             },
             IterSpec::From(row, col, dir) => {

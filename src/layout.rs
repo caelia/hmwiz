@@ -15,7 +15,7 @@ use enterpolation::linear::{Linear, LinearBuilder, LinearError};
 use enterpolation::{DiscreteGenerator, Generator};
 
 use crate::config::Config;
-use crate::structures::{Dir, Flat2d, IndexedGrid};
+use crate::structures::{Dir, IterSpec, Flat2d, IndexedGrid};
 
 #[derive(Debug)]
 struct SampledSlices {
@@ -99,7 +99,6 @@ impl Layout {
     }
 */
 
-// Meaningless comment - because my branch was inconsistent due to massive clock skew
 
 #[derive(Debug)]
 struct Layout {
@@ -117,10 +116,10 @@ impl Layout {
         let lo_points = HashSet::new();
         let trng = thread_rng();
 
-        let excess_tries_msg = "
-                Exceeded maximum number of tries to set unique layout points.\n
-                This is probably just a fluke, but if it happens repeatedly,\n
-                please file a bug report.
+        let excess_tries_msg = "\
+            Exceeded maximum number of tries to set unique layout points.\n
+            This is probably just a fluke, but if it happens repeatedly,\n
+            please file a bug report.
             ";
         for _ in 0..config.n_hi {
             let row = trng.gen_range(ridx0..ridxn);
@@ -174,21 +173,15 @@ impl Layout {
 
         let hgrid = IndexedGrid::from(all_points, None);
         // Set edge points to margin height
-        for row in [0, rows - 1] {
-            hgrid.setup_iteration(Dir::H, None);
-            for col in hgrid {
-                hgrid.set(row, col, Some(0.));
-            }
-        }
-        for col in [0, cols - 1] {
-            hgrid.setup_iteration(Dir::V, None);
-            for row in hgrid {
-                hgrid.set(row, col, Some(0.));
-            }
+        hgrid.setup_iteration(IterSpec::Edges);
+        for (row, col) in hgrid {
+            hgrid.set(row, col, Some(config.margin_height));
         }
 
         let vgrid = hgrid.clone();
         let fynal = hgrid.clone_blank();
+
+        assert!(vgrid == hgrid && fynal == vgrid);
 
         Layout {
             config,
@@ -198,7 +191,10 @@ impl Layout {
         }
     }
 
-    pub fn set_crossings(&mut self) {}
+    pub fn set_crossings(&mut self) {
+        // Horizontal
+        // Vertical
+    }
 }
 // }
 
