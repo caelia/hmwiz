@@ -14,6 +14,7 @@ use enterpolation::bezier::{Bezier, BezierBuilder, BezierError};
 use enterpolation::linear::{Linear, LinearBuilder, LinearError};
 use enterpolation::{DiscreteGenerator, Generator};
 
+/*
 #[derive(Debug, Clone, PartialEq)]
 pub enum Dir {
     H,
@@ -291,5 +292,50 @@ mod test {
         assert_eq!(igrid.get(0, 4), 27.5);
         assert_eq!(igrid.get(3, 4), 12.1);
         assert_eq!(igrid.get(10, 7), 44.6);
+    }
+}
+*/
+
+#[derive(Debug)]
+pub enum GridOrientation {
+    RowMajor,
+    ColumnMajor,
+}
+
+#[derive(Debug, Clone)]
+pub struct Grid<T> {
+    rows: usize,
+    cols: usize,
+    orientation: GridOrientation,
+    data: Vec<T>,
+}
+
+
+impl<T> Grid<T> {
+    pub fn new(rows: usize, cols: usize, orientation: GridOrientation, default: T) -> Self {
+        Grid { rows, cols, orientation, data: vec![default; rows * cols]}
+    }
+    fn get_index(&self, row: usize, col: usize) -> usize {
+        match self.orientation {
+            GridOrientation::RowMajor => row * self.cols + col,
+            GridOrientation::ColumnMajor => col * self.rows + row,
+        }
+    }
+    pub fn get(&self, row: usize, col: usize) -> T {
+        self.data[self.get_index(row, col)]
+    }
+    pub fn get_rank(&self, index: usize) -> Vec<T> {
+        let (nrows, ncols) = (self.rows, self.cols);
+        let (start, end) = match self.orientation {
+            GridOrientation::RowMajor => (index * ncols, (index + 1) *  ncols),
+            GridOrientation::ColumnMajor => (index * nrows, (index + 1) * nrows),
+        };
+        vec![self.data[start..end]]
+    }
+    pub fn get_range(&self, index: usize, start: usize, end: usize) -> Vec<T> {
+        self.get_rank(index)[start..end]
+    }
+    pub fn set(&mut self, row: usize, col: usize, value: T) {
+        self.data[self.get_index(row, col)] = value;
     }
 }

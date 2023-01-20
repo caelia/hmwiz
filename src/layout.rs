@@ -15,97 +15,36 @@ use enterpolation::linear::{Linear, LinearBuilder, LinearError};
 use enterpolation::{DiscreteGenerator, Generator};
 
 use crate::config::Config;
-use crate::structures::{Dir, SeqSpec, Flat2d, IndexedGrid};
+use crate::structures::{GridOrientation, Grid};
 
-#[derive(Debug)]
-struct SampledSlices {
-    rows: usize,
-    cols: usize,
-    data: HashMap<usize, HashMap<usize, Option<f32>>>,
-}
-
-#[derive(Debug)]
-struct CompleteSlices {
-    rows: usize,
-    cols: usize,
-    data: Vec<Vec<f32>>,
-}
-
-impl Flat2d for SampledSlices {
-    type DataPoint = Option<f32>;
-    fn rows(&self) -> usize {
-        self.rows
-    }
-    fn cols(&self) -> usize {
-        self.cols
-    }
-    fn data(&self) -> HashMap<usize, HashMap<usize, Option<f32>>> {
-        self.data
-    }
-}
-
-impl Flat2d for CompleteSlices {
-    type DataPoint = f32;
-    fn rows(&self) -> usize {
-        self.rows
-    }
-    fn cols(&self) -> usize {
-        self.cols
-    }
-    fn data(&self) -> Vec<Vec<f32>> {
-        self.data
-    }
-}
 // to prevent endless loops when populating layout grid
 const LAYOUT_MAX_TRIES: u8 = 10;
 
-/*
-#[derive(Debug)]
-struct Layout {
-    rows: usize,
-    cols: usize,
-    guidepoints: Vec<Option<f32>>,
-    hslices: HashMap<usize, Vec<f32>>,
-    vslices: HashMap<usize, Vec<f32>>,
-    grid: Vec<(usize, f32)>,
-}
-*/
-/*
-impl Flat2d for Layout {
-    type DataPoint = (usize, f32);
-    fn rows(&self) -> usize {
-        self.rows
-    }
-    fn cols(&self) -> usize {
-        self.cols
-    }
-    fn data(&self) -> Vec<(usize, f32)> {
-        self.grid
-    }
-}
-*/
 
-/*
-impl Layout {
-    fn new() -> Self {
-        Layout {
-            rows: 0,
-            cols: 0,
-            guidepoints: Vec::new(),
-            hslices: HashMap::new(),
-            vslices: HashMap::new(),
-            grid: Vec::new()
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Dir {
+    H(bool),
+    V(bool),
+}
+
+impl Dir {
+    fn flip(&self) -> Self {
+        match self {
+            Dir::H(fwd) => Dir::H(!fwd),
+            Dir::V(fwd) => Dir::V(!fwd),
         }
     }
-*/
-
+}
 
 #[derive(Debug)]
 struct Layout {
     config: Config,
-    hgrid: IndexedGrid<Option<f32>>,
-    vgrid: IndexedGrid<Option<f32>>,
-    fynal: IndexedGrid<Option<f32>>,
+    active_rows: Vec<usize>,
+    active_cols: Vec<usize>,
+    hgrid: Grid<Option<f32>>,
+    vgrid: Grid<Option<f32>>,
+    merged: Grid<Option<f32>>,
 }
 
 impl Layout {
@@ -116,6 +55,8 @@ impl Layout {
         let lo_points = HashSet::new();
         let trng = thread_rng();
 
+        let active_rows = Vec::new();
+        let active_cols= Vec::new();
         let excess_tries_msg = "\
             Exceeded maximum number of tries to set unique layout points.\n
             This is probably just a fluke, but if it happens repeatedly,\n
@@ -127,6 +68,8 @@ impl Layout {
             let tries = 1;
             loop {
                 if hi_points.insert((row, col)) {
+                    active_rows.push(row);
+                    active_cols.push(col);
                     break;
                 }
                 tries += 1;
@@ -141,6 +84,8 @@ impl Layout {
             let tries = 1;
             loop {
                 if lo_points.insert((row, col)) {
+                    active_rows.push(row);
+                    active_cols.push(col);
                     break;
                 }
                 tries += 1;
@@ -157,37 +102,87 @@ impl Layout {
             );
         }
 
+        active_rows.sort();
+        active_rows.dedup();
+        active_cols.sort();
+        active_cols.dedup();
+
         let all_points = Vec::new();
         for (r, c) in hi_points.iter() {
             let height = trng.gen_range(config.hi_min..=config.hi_max);
-            all_points.push((*r, *c, Some(height)));
+            all_points.push((*r, *c, height));
         }
         for (r, c) in lo_points.iter() {
             let height = trng.gen_range(config.lo_min..=config.lo_max);
-            all_points.push((*r, *c, Some(height)));
+            all_points.push((*r, *c, height));
         }
         // Add corners
         for (r, c) in [(0, 0), (0, cols - 1), (rows - 1, 0), (rows - 1, cols - 1)] {
-            all_points.push((r, c, Some(config.margin_height)));
+            all_points.push((r, c, config.margin_height));
         }
 
-        let hgrid = IndexedGrid::from(all_points, None);
-        // Set edge points to margin height
-        for (row, col) in hgrid.sequence(SeqSpec::Edges) {
-            hgrid.set(row, col, Some(config.margin_height));
+        // Add edge points where needed
+        for row in [0, rows - 1] {
+            for col in active_cols {
+                all_points.push((row, col, config.margin_height));
+            }
+        }
+        for col in [0, cols - 1] {
+            for row in active_rows {
+                all_points.push((row, col, config.margin_height));
+            }
         }
 
-        let vgrid = hgrid.clone();
-        let fynal = hgrid.clone_blank();
+        let hgrid  = Grid::new(config.rows, config.cols, GridOrientation::RowMajor, None);
+        let vgrid  = Grid::new(config.rows, config.cols, GridOrientation::ColumnMajor, None);
+        let merged = Grid::new(config.rows, config.cols, GridOrientation::RowMajor, None);
 
-        assert!(vgrid == hgrid && fynal == vgrid);
+        for (row, col, height) in all_points {
+            hgrid.set(row, col, Some(height));
+            vgrid.set(row, col, Some(height));
+        }
 
         Layout {
             config,
             hgrid,
             vgrid,
-            fynal,
+            active_rows,
+            active_cols,
+            merged,
         }
+    }
+
+    fn get_hsegment(&self, row: usize, col: usize, dir: Dir) -> Vec<(usize, usize)> {
+        let result = Vec::new();
+        match dir {
+            Dir::H(true) => {
+                let start_idx = self.active_cols.binary_search(&col).unwrap();
+                let (_, cols) = self.active_cols.split_at[start_idx];
+                for c in cols {
+                    result.push((row, c));
+                }
+                result
+            },
+            Dir::H(false) => {
+                let start_idx = self.active_cols.binary_search(&col).unwrap();
+                let (cols, _) = self.active_cols.split_at[start_idx];
+                for c in cols.rev() {}
+                    result.push(row, c);
+                }
+                result
+            },
+            _ => panic!("Invalid argument for Layout::get_hsegment: {?}", dir),
+        }
+    }
+    fn get_vsegment(&self, row: usize, col: usize, dir: Dir) -> Vec<(usize, usize)> {
+        match dir {
+            Dir::V(true) => {},
+            Dir::V(false) => {},
+            _ => panic!("Invalid argument for Layout::get_hsegment: {?}", dir),
+        }
+    }
+    fn get_next_defined_point(&self, row: usize, col: usize, dir: Dir) -> Option<(usize, usize, f32)> {
+        let segment = 
     }
 
     pub fn set_crossings(&mut self) {
