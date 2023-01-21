@@ -6,6 +6,7 @@
 mod config;
 mod crawler;
 mod grid;
+mod layout;
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
@@ -23,7 +24,12 @@ use image::{GenericImage, GrayImage, ImageBuffer, Luma};
 use config::Config;
 use crawler::{GridCrawler, GridCrawlerArray};
 use grid::{Grid, Orientation};
+use layout::Point;
 
 fn main() {
-    println!("HMWIZ FTW!!!");
+    let rows = 4096;
+    let cols = 4096;
+    let default: Point<f32> = Point::Empty;
+    let grid = Grid::new(rows, cols, Orientation::RowMajor, default);
+    println!("It's a grid!! {:?}", grid);
 }
