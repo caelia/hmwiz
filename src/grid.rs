@@ -42,4 +42,31 @@ where
         let mut idx = self.get_index(row, col);
         self.data[idx] = val;
     }
+
+    // I think slices should be a mutable iterator?
+    pub fn get_slices(&self) -> Vec<&mut Vec<T>> {
+        let (major, minor) = match self.orientation {
+            Orientation::RowMajor => (self.rows, self.cols),
+            Orientation::ColMajor => (self.cols, self.rows),
+        };
+        let result = Vec::new();
+        for i in 0..major {
+            let start = i * minor;    
+            let end = start + minor;
+            result.push(&self.data[start..end]);
+        }
+        result
+    }
+    /*
+    pub fn get_seq(&self, idx: usize) -> Vec<T> {
+        match self.orientation {
+            Orientation::RowMajor {
+                
+            },
+            Orientation::ColMajor {
+                
+            }
+        }    
+    }
+    */
 }
