@@ -6,6 +6,7 @@
 mod config;
 mod crawler;
 mod grid;
+mod envelope;
 mod layout;
 
 use std::cmp::Ordering;
