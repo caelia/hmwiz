@@ -7,7 +7,6 @@ pub struct Config {
     pub cols: usize,
     pub margin_width: usize,
     pub margin_height: f32,
-    pub pad_width: usize,
     pub n_hi: usize,
     pub hi_min: f32,
     pub hi_max: f32,
@@ -35,7 +34,6 @@ impl Config {
             cols,
             margin_width: 16,
             margin_height: 0.,
-            pad_width: 4,
             n_hi,
             hi_min,
             hi_max: hi_max.unwrap_or(255.),
@@ -53,13 +51,5 @@ impl Config {
             self.rows - self.margin_width * 2 + 2,
             self.cols - self.margin_width * 2 + 2,
         )
-    }
-
-    // Gives minimum and maximum indices where non-edge points
-    // can be set in the layout grid.
-    pub fn active_limits(&self) -> (usize, usize, usize, usize) {
-        let pw = self.pad_width;
-        let (r, c) = self.layout_dimensions();
-        (pw, r - pw, pw, c - pw)
     }
 }
