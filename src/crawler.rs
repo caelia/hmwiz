@@ -1,5 +1,9 @@
+use crate::grid::Grid;
+
 #[derive(Debug)]
 pub struct GridCrawler {}
 
 #[derive(Debug)]
-pub struct GridCrawlerArray {}
+pub struct GridCrawlerArray {
+    crawlers: Vec<GridCrawler>,
+}
