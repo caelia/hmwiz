@@ -7,7 +7,9 @@ use crate::grid::Grid;
 use crate::layout::Point;
 
 const TIMEOUT: Duration = Duration::from_secs(20);
-const PAUSE: Duration = Duration::from_millis(10);
+const MSG_TIMEOUT: Duration = Duration::from_millis(2);
+const SHORT_PAUSE: Duration = Duration::from_micros(2);
+const LONG_PAUSE: Duration = Duration::from_millis(10);
 
 #[derive(Debug)]
 enum CrawlerRole {
@@ -175,6 +177,25 @@ impl GridCrawler<'_> {
             None => panic!("Attempting to use a nonexistent message port ({:?})", sel),
         }
     }
+    fn await_msg(&self, sel: CSel) -> Option<Msg> {
+        let timer = Instant::now();
+        loop {
+            let msg = self.recv(sel);
+            match msg {
+                Some(_) => return msg,
+                None => (),
+            }
+            if timer.elapsed() > MSG_TIMEOUT {
+                return None
+            }
+            thread::sleep(SHORT_PAUSE);
+        }
+    }
+    fn ready(&self) {
+        loop {
+            
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -266,13 +287,13 @@ impl GridCrawlerArray<'_> {
     pub fn crawl(&self) {
         let left = self.crawlers.first();
         let right = self.crawlers.last();
-        let now = Instant::now();
         let mut left_done = false;
         let mut right_done = false;
         
         self.send_port1.push_back(Msg::Start);
         self.send_port2.push_back(Msg::Start);
         
+        let timer = Instant::now();
         loop {
             if !left_done { 
                 match self.recv_port1.pop_front() {
@@ -292,10 +313,10 @@ impl GridCrawlerArray<'_> {
                 println!("Grid crawlers have completed all tasks!");
                 break;
             }
-            if now.elapsed > TIMEOUT {
+            if timer.elapsed > TIMEOUT {
                 panic!("Grid crawler timeout!");
             }
-            thread::sleep(PAUSE);
+            thread::sleep(LONG_PAUSE);
         }
     }
 }
