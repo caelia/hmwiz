@@ -408,7 +408,7 @@ fn main() {
         }
     }
     // img1.save("test1.png");
-    img1.save("test.png");
+    let _ = img1.save("test.png");
     /*
     let map2 = generate_tile(Corners(0.0, 0.0, 0.0, 0.0), 0.0, 255.0, 0.6);
     let mut img2 = GrayImage::new(33, 33);
