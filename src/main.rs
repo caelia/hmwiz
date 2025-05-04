@@ -2,14 +2,157 @@
 #![allow(unused_mut)]
 #![allow(dead_code)]
 
-use std::ops::Index;
-use rand::prelude::*;
-use rand_distr::{LogNormal, Distribution};
-// use rand_distr::{Normal, Distribution};
-use image::{GrayImage, Luma};
+// use std::ops::Index;
+// use rand::prelude::*;
+use rand::{random_range, random_bool};
+// use rand_distr::{LogNormal, Distribution};
+// use image::{GrayImage, Luma};
+use image::{Rgb, RgbImage};
 
 struct Corners (f32, f32, f32, f32);
 
+#[derive(Debug, Clone, Copy)]
+enum LoS {
+    Land,
+    Sea,
+    Undef
+}
+
+#[derive(Debug)]
+enum Dir {
+    N,
+    S,
+    E,
+    W,
+}
+
+#[derive(Debug)]
+struct LosCrawler {
+    dir: Dir,
+    strength: i16,
+}
+
+impl LosCrawler {
+    fn new(dir: Dir, strength_: Option<i16>) -> Self {
+        let strength = match strength_ {
+            Some(strength) => strength,
+            None => random_range(0..256),
+            
+        };
+        LosCrawler{ dir, strength }
+    }
+
+    fn reduce_strength(&mut self) {
+        let decrement = random_range(0..4);
+        self.strength = i16::max(0, self.strength - decrement);
+    }
+}
+
+#[derive(Debug)]
+struct LosMap<const M: usize, const N: usize> {
+    points: [[LoS; M]; N],
+    margin: usize,
+    seed_points: Vec<(usize, usize)>
+}
+
+impl<const M: usize, const N: usize> LosMap<M, N> {
+    fn new(margin: usize) -> LosMap<M, N> {
+        LosMap {
+            points: [[LoS::Undef; M]; N],
+            seed_points: vec![],
+            margin,
+        }
+    }
+
+    fn set_seeds(&mut self, mut n: u8) {
+        while n > 0 {
+            let c = random_range(self.margin..(M - self.margin));
+            let r = random_range(self.margin..(N - self.margin));
+            if self.seed_points.contains(&(c, r)) {
+                continue;
+            }
+            self.points[r][c] = LoS::Land;
+            self.seed_points.push((c, r));
+            n -= 1;
+        }
+    }
+
+    fn sub_crawl(&mut self, mut crawler: LosCrawler, mut c: usize, mut r: usize, on_axis: bool) {
+        loop {
+            crawler.reduce_strength();
+            if crawler.strength == 0 {
+                break;
+            }
+            let (next_c, next_r, left, right) = match crawler.dir {
+                Dir::N => {
+                    if r <= self.margin {
+                        break;
+                    } else {
+                        (c, r - 1, Dir::W, Dir::E)
+                    }
+                },
+                Dir::S => {
+                    if r >= N - self.margin {
+                        break;
+                    } else {
+                        (c, r + 1, Dir::E, Dir::W)
+                    }
+                },
+                Dir::E => {
+                    if c >= M - self.margin {
+                        break;
+                    } else {
+                        (c + 1, r, Dir::N, Dir::S)
+                    }
+                },
+                Dir::W => {
+                    if c <= self.margin {
+                        break;
+                    } else {
+                        (c - 1, r, Dir::S, Dir::N)
+                    }
+                }
+            };
+            match self.points[next_r][next_c] {
+                LoS::Land | LoS::Sea => break,
+                LoS::Undef => self.points[next_r][next_c] = LoS::Land
+            }
+            if on_axis {
+                self.sub_crawl(LosCrawler::new(left, Some(crawler.strength)), next_c, next_r, random_bool(0.7));
+                self.sub_crawl(LosCrawler::new(right, Some(crawler.strength)), next_c, next_r, random_bool(0.7));
+            }
+            r = next_r;
+            c = next_c;
+        }
+    }
+
+    fn crawl(&mut self) {
+        for (c, r) in self.seed_points.clone() {
+            for dir in [Dir::N, Dir::E, Dir::S, Dir::W] {
+                self.sub_crawl(LosCrawler::new(dir, None), c, r, true);
+            }
+        }
+    }
+
+    fn render(&self) {
+        let mut img = RgbImage::new(M as u32, N as u32);
+        let green = Rgb([0, 220, 40]);
+        let blue = Rgb([80, 80, 207]);
+
+        for r in 0..N {
+            for c in 0..M {
+                match self.points[r][c] {
+                    LoS::Land => img.put_pixel(c as u32, r as u32, green),
+                    _ => img.put_pixel(c as u32, r as u32, blue),
+                }
+            }
+        }
+
+        let _ = img.save("test.png");
+    }
+}
+
+/*
 #[derive(Debug)]
 enum Map {
     Tile ([f32;1089]),
@@ -338,7 +481,16 @@ fn generate_map(ntiles: usize, min_roughness: f32, max_roughness: f32) -> Map {
     }
     map
 }
+*/
 
+fn main() {
+    let mut map: LosMap<1024, 2048> = LosMap::new(8);
+    map.set_seeds(64);
+    map.crawl();
+    map.render();
+}
+
+/*
 fn main() {
     // println!("{:?}", tile);
     /*
@@ -421,3 +573,4 @@ fn main() {
     img2.save("test2.png");
     */
 }
+*/
