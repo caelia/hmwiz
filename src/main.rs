@@ -184,6 +184,63 @@ fn mixed1() -> (NoiseMap, NoiseMap, NoiseMap) {
     )
 }
 
+fn mixed2() -> (NoiseMap, NoiseMap) {
+    let gen1 = Billow::<Worley>::new(0).set_octaves(2);
+    let gen2 = Billow::<Perlin>::new(0).set_octaves(3);
+    let turbo1 = Turbulence::<_, Billow<Worley>>::new(gen1).set_roughness(2);
+    let turbo2 = Turbulence::<_, Billow<Perlin>>::new(gen2);
+    (
+    PlaneMapBuilder::new(turbo1)
+        .set_size(1024, 1024)
+        .set_x_bounds(-5.0, 5.0)
+        .set_y_bounds(-5.0, 5.0)
+        .build(),
+    PlaneMapBuilder::new(turbo2)
+        .set_size(1024, 1024)
+        .set_x_bounds(-5.0, 5.0)
+        .set_y_bounds(-5.0, 5.0)
+        .build(),
+    )
+}
+
+fn mixed3() -> (NoiseMap, NoiseMap) {
+    let gen1 = Fbm::<Perlin>::new(0).set_octaves(2);
+    let gen2 = Billow::<Worley>::new(0).set_octaves(4);
+    let turbo1 = Turbulence::<_, Fbm<Worley>>::new(gen1).set_roughness(2);
+    let turbo2 = Turbulence::<_, Billow<Perlin>>::new(gen2);
+    (
+    PlaneMapBuilder::new(turbo1)
+        .set_size(1024, 1024)
+        .set_x_bounds(-5.0, 5.0)
+        .set_y_bounds(-5.0, 5.0)
+        .build(),
+    PlaneMapBuilder::new(turbo2)
+        .set_size(1024, 1024)
+        .set_x_bounds(-5.0, 5.0)
+        .set_y_bounds(-5.0, 5.0)
+        .build(),
+    )
+}
+
+fn mixed4() -> (NoiseMap, NoiseMap) {
+    let gen1 = Fbm::<Worley>::new(0).set_octaves(2);
+    let gen2 = Billow::<Perlin>::new(0).set_octaves(3);
+    let turbo1 = Turbulence::<_, Fbm<Worley>>::new(gen1).set_roughness(2);
+    let turbo2 = Turbulence::<_, Billow<Perlin>>::new(gen2).set_roughness(2);
+    (
+    PlaneMapBuilder::new(turbo1)
+        .set_size(1024, 1024)
+        .set_x_bounds(-5.0, 5.0)
+        .set_y_bounds(-5.0, 5.0)
+        .build(),
+    PlaneMapBuilder::new(turbo2)
+        .set_size(1024, 1024)
+        .set_x_bounds(-5.0, 5.0)
+        .set_y_bounds(-5.0, 5.0)
+        .build(),
+    )
+}
+
 fn main() {
     // let (layer1, layer2, layer3) = fbm_worley248();
     // let (layer1, layer2, layer3) = bmf_perlin248();
@@ -191,16 +248,20 @@ fn main() {
     // let (layer1, layer2, layer3) = hm2_perlin248();
     // let (layer1, layer2, layer3) = turbo_worley();
     // let (layer1, layer2, layer3) = turbo_perlin();
-    let (layer1, layer2, layer3) = mixed1();
+    // let (layer1, layer2, layer3) = mixed1();
+    // let (layer1, layer2) = mixed2();
+    // let (layer1, layer2) = mixed3();
+    let (layer1, layer2) = mixed4();
 
     let mut img = GrayImage::new(1024, 1024);
     for r in 0..1024 {
         for c in 0..1024 {
             let val1 = layer1.get_value(c, r);
             let val2 = layer2.get_value(c, r);
-            let val3 = layer3.get_value(c, r);
+            // let val3 = layer3.get_value(c, r);
             
-            let val = val1 * 0.45 + val2 * 0.33 + val3 * 0.22;
+            // let val = val1 * 0.45 + val2 * 0.33 + val3 * 0.22;
+            let val = val1 * 0.6 + val2 * 0.4;
 
             if val > THRESHOLD {
                 img.put_pixel(c as u32, r as u32, Luma([255]));
