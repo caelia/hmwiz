@@ -3,12 +3,13 @@
 #![allow(dead_code)]
 
 use rand::prelude::*;
+use rand::random_range;
 use rand_distr::{Pert, Distribution};
 use image::{GrayImage, GenericImage, ImageBuffer, Luma};
-use noise::{Turbulence, Billow, BasicMulti, RidgedMulti, HybridMulti, Fbm, Worley, MultiFractal, Perlin};
+use noise::{Blend, Turbulence, Billow, BasicMulti, RidgedMulti, HybridMulti, Fbm, Worley, MultiFractal, Perlin};
 use noise::utils::{NoiseMapBuilder, NoiseMap, PlaneMapBuilder};
 
-const THRESHOLD: f64 = 0.1;
+const THRESHOLD: f64 = 0.07;
 
 fn fbm_worley248() -> (NoiseMap, NoiseMap, NoiseMap) {
     let fbm1 = Fbm::<Worley>::new(0).set_octaves(2);
@@ -241,6 +242,22 @@ fn mixed4() -> (NoiseMap, NoiseMap) {
     )
 }
 
+fn blend() -> NoiseMap {
+    
+    let perlin = Perlin::new(random_range(..u32::MAX));
+    let ridged = RidgedMulti::<Perlin>::new(random_range(0..u32::MAX)).set_octaves(4);
+    let fbm = Fbm::<Perlin>::default();
+    let turbo = Turbulence::<_, Fbm<Perlin>>::new(fbm).set_roughness(2);
+    let blend = Blend::new(perlin, ridged, turbo);
+
+    PlaneMapBuilder::new(blend)
+        .set_size(1024, 1024)
+        .set_is_seamless(true)
+        .set_x_bounds(2.0, -2.0)
+        .set_y_bounds(2.0, -2.0)
+        .build()
+}
+
 fn main() {
     // let (layer1, layer2, layer3) = fbm_worley248();
     // let (layer1, layer2, layer3) = bmf_perlin248();
@@ -251,17 +268,19 @@ fn main() {
     // let (layer1, layer2, layer3) = mixed1();
     // let (layer1, layer2) = mixed2();
     // let (layer1, layer2) = mixed3();
-    let (layer1, layer2) = mixed4();
+    // let (layer1, layer2) = mixed4();
+    let layer1 = blend();
 
     let mut img = GrayImage::new(1024, 1024);
     for r in 0..1024 {
         for c in 0..1024 {
-            let val1 = layer1.get_value(c, r);
-            let val2 = layer2.get_value(c, r);
+            let val = layer1.get_value(c, r);
+            // let val1 = layer1.get_value(c, r);
+            // let val2 = layer2.get_value(c, r);
             // let val3 = layer3.get_value(c, r);
             
             // let val = val1 * 0.45 + val2 * 0.33 + val3 * 0.22;
-            let val = val1 * 0.6 + val2 * 0.4;
+            // let val = val1 * 0.6 + val2 * 0.4;
 
             if val > THRESHOLD {
                 img.put_pixel(c as u32, r as u32, Luma([255]));
