@@ -7,10 +7,11 @@ mod grid;
 mod common;
 
 use rand_distr;
-use grid::{Pt, Grid};
+use grid::{Node, Grid};
 use common::*;
 
 fn main() {
-    let mut grid: Grid<DEFAULT_WIDTH, DEFAULT_HEIGHT> = Grid::default();
-    grid.set_seeds();
+    let mut grid = Grid::new(1024, 1024, 25., None);
+    grid.set_seeds(20.);
+    grid.show_seeds();
 }
