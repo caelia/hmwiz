@@ -37,7 +37,7 @@ pub enum SlopeChange {
 }
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NodeData {
     pub elevation: f32,
     pub roughness: f32,
@@ -89,7 +89,7 @@ impl NodeData {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Node {
     Anchor(NodeData),
     Seed(NodeData),
@@ -143,12 +143,15 @@ impl Node {
     }
 
     pub fn set_elevation(&mut self, new_elev: f32) -> bool {
+        let mut msg = String::new();
         match self {
             Node::Anchor(data) | Node::Seed(data) | Node::Proposed(data) => {
+                // println!("[{}] -> [{}]", data.elevation, new_elev);
                 data.elevation = new_elev;
                 true
             },
             Node::Final(elev) => {
+                // println!("[{}] -> [{}]", elev, new_elev);
                 *elev = new_elev;
                 true
             },
@@ -157,7 +160,7 @@ impl Node {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Settings {
     max_height: f32,
     max_depth: f32,
@@ -181,12 +184,12 @@ impl Default for Settings {
             gravity: 0.1,
             strength: 0.5,
             flattening: 0.25,
-            seeds: 24,
+            seeds: 32,
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Grid {
     data: Vec<Vec<Node>>,
     globals: Settings,
@@ -237,7 +240,7 @@ impl Grid {
             println!(":: {:04} ::::::::::::::::", r);
             for c in 0..cols {
                 match self.node_at(c, r) {
-                    Some(node) => println!("{:?}\n------------------------", node),
+                    Some(node) => println!("<{:>3}|{:>3}> {:?}\n------------------------", c, r, node),
                     None => println!("[NONE]\n------------------------"),
                 }
             }
@@ -248,7 +251,8 @@ impl Grid {
         let (rows, cols) = self.dimensions();
         let margin = self.margin;
         let row = margin;        
-        let depth = self.globals.max_depth / 2.;
+        // let depth = self.globals.max_depth / 2.;
+        let depth = self.globals.max_depth / 4.;
         (margin..(cols - margin)).into_iter().for_each(|c| {
             self.set_node_at(c, row, Node::Anchor(NodeData::anchor_data(depth, 0., 0., 0.)));
             // println!("[{}][{}]", c, row);
@@ -275,14 +279,15 @@ impl Grid {
             _ => self.data[0].len(),
         };
         
-        let (hmin, hmax) = (self.margin + 1, width - self.margin - 1);
-        let (vmin, vmax) = (self.margin + 1, height - self.margin - 1);
+        let padding = (self.margin * 2) + 1;
+        let (hmin, hmax) = (padding, width - padding);
+        let (vmin, vmax) = (padding, height - padding);
         let mut rng = rand::rng();
         while seed_locations.len() < self.globals.seeds {
             let col: usize = rng.random_range(hmin..hmax);
             let row: usize = rng.random_range(vmin..vmax);
             if !seed_locations.contains(&(col, row)) {
-                println!("[{:>3}][{:>3}]", col, row);
+                // println!("[{:>3}][{:>3}]", col, row);
                 seed_locations.push((col, row));
             }
         }
@@ -309,9 +314,9 @@ impl Grid {
 
     pub fn adjust_seed_heights(&mut self, seed_rows: Vec<usize>, seed_cols: Vec<usize>) {
         let (rows, cols) = self.dimensions();
-        let min_col = self.margin + 1;
+        let min_col = self.margin;
         let max_col = cols - self.margin;
-        let min_row = self.margin + 1;
+        let min_row = self.margin;
         let max_row = rows - self.margin;
         assert!(max_col > min_col);
         assert!(max_row > min_row);
@@ -319,34 +324,43 @@ impl Grid {
         for row in seed_rows {
             let mut seed_found = false;
             // Forward
-            if let Some(node @ Node::Anchor(_)) = self.node_at(min_col, row) {
+            let mut col1 = min_col;
+            // println!("{col1} >>>");
+            if let Some(node @ Node::Anchor(_)) = self.node_at(col1, row) {
                 let mut done = false;
-                let mut col1 = min_col;
+                let mut node_here = node;
                 while !done {
                     match self.next_node(col1, row, Dir::E) {
-                        Some((col2, _, mut node_ahead)) => match node {
-                            Node::Anchor(_) => done = true,
-                            Node::Seed(_) => {
-                                seed_found = true;
-                                let dist = distance(col1, row, col2, row);
-                                let elev_here = node.elevation().unwrap();
-                                let elev_ahead = node_ahead.elevation().unwrap();
-                                let ediff = elev_ahead - elev_here;
-                                let slope = ediff / dist as f32;
-                                if slope > 1.0 {
-                                    node_ahead.set_elevation(
-                                        elev_here + (dist as f32)
-                                    );
-                                } else if slope < -1.0 {
-                                    node_ahead.set_elevation(
-                                        elev_here - dist as f32
-                                    );
-                                }
-                                col1 = col2;
-                            },
-                            _ => panic!("Wrong node type found at {}, {}.", col1, row),
+                        Some((col2, _, mut node_ahead)) => {
+                            match node_ahead {
+                                Node::Anchor(_) => {
+                                    done = true;
+                                },
+                                Node::Seed(_) => {
+                                    seed_found = true;
+                                    let dist = distance(col1, row, col2, row);
+                                    let elev_here = node_here.elevation().unwrap();
+                                    let elev_ahead = node_ahead.elevation().unwrap();
+                                    let ediff = elev_ahead - elev_here;
+                                    let slope = ediff / dist as f32;
+                                    if slope > 1.0 {
+                                        node_ahead.set_elevation(
+                                            elev_here + (dist as f32)
+                                        );
+                                        self.set_node_at(col2, row, node_ahead);
+                                    } else if slope < -1.0 {
+                                        node_ahead.set_elevation(
+                                            elev_here - dist as f32
+                                        );
+                                        self.set_node_at(col2, row, node_ahead);
+                                    }
+                                },
+                                _ => panic!("Wrong node type found at {}, {}.", col1, row),
+                            }
+                            col1 = col2;
+                            node_here = node_ahead;
                         },
-                        None => panic!("Expected Anchor node to end traversal.")
+                        None => panic!("Expected Anchor node to end traversal. (r{row}f)")
                     }
                 }
             } else {
@@ -354,38 +368,46 @@ impl Grid {
             }
 
             // Reverse
-            if let Some(node @ Node::Anchor(_)) = self.node_at(max_col - 1, row) {
+            let mut col1 = max_col - 1;
+            // println!("<<< {col1}");
+            if let Some(node @ Node::Anchor(_)) = self.node_at(col1, row) {
                 let mut done = false;
-                let mut col1 = max_col;
+                let mut node_here = node;
                 while !done {
                     match self.next_node(col1, row, Dir::W) {
-                        Some((col2, _, mut node_ahead)) => match node {
-                            Node::Anchor(_) => done = true,
-                            Node::Seed(_) => {
-                                seed_found = true;
-                                let dist = distance(col1, row, col2, row);
-                                let elev_here = node.elevation().unwrap();
-                                let elev_ahead = node_ahead.elevation().unwrap();
-                                let ediff = elev_ahead - elev_here;
-                                let slope = ediff / dist as f32;
-                                if slope > 1.0 {
-                                    node_ahead.set_elevation(
-                                        elev_here + (dist as f32)
-                                    );
-                                } else if slope < -1.0 {
-                                    node_ahead.set_elevation(
-                                        elev_here - dist as f32
-                                    );
-                                }
-                                col1 = col2;
-                            },
-                            _ => panic!("Wrong node type found at {}, {}.", col1, row),
+                        Some((col2, _, mut node_ahead)) => {
+                            match node_ahead {
+                                Node::Anchor(_) => done = true,
+                                Node::Seed(_) => {
+                                    // println!("Reverse traverse to [SEED]");
+                                    seed_found = true;
+                                    let dist = distance(col1, row, col2, row);
+                                    let elev_here = node_here.elevation().unwrap();
+                                    let elev_ahead = node_ahead.elevation().unwrap();
+                                    let ediff = elev_ahead - elev_here;
+                                    let slope = ediff / dist as f32;
+                                    if slope > 1.0 {
+                                        node_ahead.set_elevation(
+                                            elev_here + (dist as f32)
+                                        );
+                                        self.set_node_at(col2, row, node_ahead);
+                                    } else if slope < -1.0 {
+                                        node_ahead.set_elevation(
+                                            elev_here - dist as f32
+                                        );
+                                        self.set_node_at(col2, row, node_ahead);
+                                    }
+                                },
+                                _ => panic!("Wrong node type found at {}, {}.", col1, row),
+                            }
+                            col1 = col2;
+                            node_here = node_ahead;
                         },
-                        None => panic!("Expected Anchor node to end traversal.")
+                        None => panic!("Expected Anchor node to end traversal. (r{row}r)")
                     }
                 }
             } else {
-                panic!("Expected Anchor node at {max_col}, {row}.");
+                panic!("Expected Anchor node at {col1}, {row}.");
             }
 
             if !seed_found {
@@ -396,34 +418,41 @@ impl Grid {
         for col in seed_cols {
             let mut seed_found = false;
             // Forward
+            // println!("VVV");
+            let mut row1 = min_row;
             if let Some(node @ Node::Anchor(_)) = self.node_at(col, min_row) {
                 let mut done = false;
-                let mut row1 = min_row;
+                let mut node_here = node;
                 while !done {
                     match self.next_node(col, row1, Dir::S) {
-                        Some((_, row2, mut node_ahead)) => match node {
-                            Node::Anchor(_) => done = true,
-                            Node::Seed(_) => {
-                                seed_found = true;
-                                let dist = distance(col, row1, col, row2);
-                                let elev_here = node.elevation().unwrap();
-                                let elev_ahead = node_ahead.elevation().unwrap();
-                                let ediff = elev_ahead - elev_here;
-                                let slope = ediff / dist as f32;
-                                if slope > 1.0 {
-                                    node_ahead.set_elevation(
-                                        elev_here + (dist as f32)
-                                    );
-                                } else if slope < -1.0 {
-                                    node_ahead.set_elevation(
-                                        elev_here - dist as f32
-                                    );
-                                }
-                                row1 = row2;
-                            },
-                            _ => panic!("Wrong node type found at {}, {}.", col, row1),
+                        Some((_, row2, mut node_ahead)) => {
+                            match node_ahead {
+                                Node::Anchor(_) => done = true,
+                                Node::Seed(_) => {
+                                    seed_found = true;
+                                    let dist = distance(col, row1, col, row2);
+                                    let elev_here = node_here.elevation().unwrap();
+                                    let elev_ahead = node_ahead.elevation().unwrap();
+                                    let ediff = elev_ahead - elev_here;
+                                    let slope = ediff / dist as f32;
+                                    if slope > 1.0 {
+                                        node_ahead.set_elevation(
+                                            elev_here + (dist as f32)
+                                        );
+                                        self.set_node_at(col, row2, node_ahead);
+                                    } else if slope < -1.0 {
+                                        node_ahead.set_elevation(
+                                            elev_here - dist as f32
+                                        );
+                                        self.set_node_at(col, row2, node_ahead);
+                                    }
+                                },
+                                _ => panic!("Wrong node type found at {}, {}.", col, row1),
+                            }
+                            row1 = row2;
+                            node_here = node_ahead;
                         },
-                        None => panic!("Expected Anchor node to end traversal.")
+                        None => panic!("Expected Anchor node to end traversal. (c{col}f)")
                     }
                 }
             } else {
@@ -431,34 +460,42 @@ impl Grid {
             }
 
             // Reverse
-            if let Some(node @ Node::Anchor(_)) = self.node_at(col, max_row - 1) {
+            // println!("^^^");
+            let mut row1 = max_row - 1;
+            if let Some(node @ Node::Anchor(_)) = self.node_at(col, row1) {
                 let mut done = false;
                 let mut row1 = max_row;
+                let mut node_here = node;
                 while !done {
                     match self.next_node(col, row1, Dir::N) {
-                        Some((_, row2, mut node_ahead)) => match node {
-                            Node::Anchor(_) => done = true,
-                            Node::Seed(_) => {
-                                seed_found = true;
-                                let dist = distance(col, row1, col, row2);
-                                let elev_here = node.elevation().unwrap();
-                                let elev_ahead = node_ahead.elevation().unwrap();
-                                let ediff = elev_ahead - elev_here;
-                                let slope = ediff / dist as f32;
-                                if slope > 1.0 {
-                                    node_ahead.set_elevation(
-                                        elev_here + (dist as f32)
-                                    );
-                                } else if slope < -1.0 {
-                                    node_ahead.set_elevation(
-                                        elev_here - dist as f32
-                                    );
-                                }
-                                row1 = row2;
-                            },
-                            _ => panic!("Wrong node type found at {}, {}.", col, row1),
+                        Some((_, row2, mut node_ahead)) => {
+                            match node_ahead {
+                                Node::Anchor(_) => done = true,
+                                Node::Seed(_) => {
+                                    seed_found = true;
+                                    let dist = distance(col, row1, col, row2);
+                                    let elev_here = node_here.elevation().unwrap();
+                                    let elev_ahead = node_ahead.elevation().unwrap();
+                                    let ediff = elev_ahead - elev_here;
+                                    let slope = ediff / dist as f32;
+                                    if slope > 1.0 {
+                                        node_ahead.set_elevation(
+                                            elev_here + (dist as f32)
+                                        );
+                                        self.set_node_at(col, row2, node_ahead);
+                                    } else if slope < -1.0 {
+                                        node_ahead.set_elevation(
+                                            elev_here - dist as f32
+                                        );
+                                        self.set_node_at(col, row2, node_ahead);
+                                    }
+                                },
+                                _ => panic!("Wrong node type found at {}, {}.", col, row1),
+                            }
+                            row1 = row2;
+                            node_here = node_ahead;
                         },
-                        None => panic!("Expected Anchor node to end traversal.")
+                        None => panic!("Expected Anchor node to end traversal. (c{col}r)")
                     }
                 }
             } else {
@@ -485,6 +522,7 @@ impl Grid {
     }
 
     pub fn next_node(&self, col: usize, row: usize, dir: Dir) -> Option<(usize, usize, Node)> {
+        // println!("NEXT_NODE: {col:03}/{row:03}|{dir:?}");
         let height = self.data.len();
         let width = if height == 0 {
             0
@@ -492,81 +530,53 @@ impl Grid {
             self.data[0].len()
         };
         assert!(col < width && row < height);
-        fn usable_node(n: &Node) -> bool {
+        fn usable_node(n: Node) -> bool {
             match n {
                 Node::Anchor(_) | Node::Proposed(_) | Node::Seed(_) => true,
                 _ => false
             }
         }
-        let mut iter = match dir {
+        let select_node = |c: usize, r: usize| {
+            // println!("NODE @ [{c}, {r}]");
+            match self.node_at(c, r) {
+                Some(n) if usable_node(n) => {
+                    // println!("[OK]");
+                    Some((c, r, n))
+                },
+                // _ => None,
+                Some(n) => {
+                    // println!("[{n:?}]");
+                    None
+                },
+                _ => {
+                    // println!("[NONE]");
+                    None
+                }
+            }                
+        };
+        match dir {
             Dir::N => {
-                (row..=0).into_iter()
+                (0..row).into_iter().rev().find_map(|i| {
+                    select_node(col, i)
+                })
             },
             Dir::E => {
-                (col..=(width-1)).into_iter()
+                ((col+1)..width).into_iter().find_map(|i| {
+                    select_node(i, row)
+                })
             },
             Dir::S => {
-                (row..=(height-1)).into_iter()
+                ((row+1)..height).into_iter().find_map(|i| {
+                    select_node(col, i)
+                })
             },
             Dir::W => {
-                (col..=0).into_iter()
+                (0..col).into_iter().rev().find_map(|i| {
+                    select_node(i, row)
+                })
             }
-        };
-        iter.find_map(|i| {
-            let (row_idx, col_idx) = match dir {
-                Dir::N | Dir::S => (i, col),
-                Dir::E | Dir::W => (row, i),
-            };
-            match self.node_at(col_idx, row_idx) {
-                Some(n) if usable_node(&n) => {
-                    Some((col_idx, row_idx, n))
-                },
-                _ => None,
-            }                
-        })
+        }
     }
-
-    // pub fn next_node_mut(&mut self, col: usize, row: usize, dir: Dir) -> Option<(usize, usize, &mut Node)> {
-    //     let height = self.data.len();
-    //     let width = if height == 0 {
-    //         0
-    //     } else {
-    //         self.data[0].len()
-    //     };
-    //     assert!(col < width && row < height);
-    //     fn usable_node(n: &mut Node) -> bool {
-    //         match n {
-    //             Node::Anchor(_) | Node::Proposed(_) | Node::Seed(_) => true,
-    //             _ => false
-    //         }
-    //     }
-    //     let mut iter = match dir {
-    //         Dir::N => {
-    //             (row..=0).into_iter()
-    //         },
-    //         Dir::E => {
-    //             (col..=(width-1)).into_iter()
-    //         },
-    //         Dir::S => {
-    //             (row..=(height-1)).into_iter()
-    //         },
-    //         Dir::W => {
-    //             (col..=0).into_iter()
-    //         }
-    //     };
-    //     iter.find_map(|i| {
-    //         let (row_idx, col_idx) = match dir {
-    //             Dir::N | Dir::S => (i, col),
-    //             Dir::E | Dir::W => (row, i),
-    //         };
-    //         match self.node_at(col_idx, row_idx) {
-    //             Some(n) if usable_node(&mut n) => {
-    //                 Some((col, i, &mut *n))
-    //             },
-    //             _ => None,
-    //         }                
-    //     })
-    // }
 
     pub fn slope_from(&self, col: usize, row: usize, dir: Dir) -> Option<f32> {
         let elev1: f32 = match self.node_at(col, row) {
@@ -726,9 +736,10 @@ impl Grid {
     }
 
     fn set_node_at(&mut self, col: usize, row: usize, node: Node) {
+        // println!("@SET[{col}][{row}]@");
         match self.data.get_mut(row) {
             Some(r) => {
-                r.insert(col, node);
+                r[col] = node;
             },
             None => (),
         }
