@@ -6,3 +6,4 @@ pub(crate) const DEFAULT_HEIGHT: usize = 1024;
 pub(crate) const DEFAULT_SEEDS: usize = 32;
 pub(crate) const DEFAULT_MARGIN: usize = 16;
 pub(crate) const MAX_SLOPE: f32 = 1.;
+
